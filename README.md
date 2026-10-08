@@ -15,3 +15,16 @@ v0.1 detects RAM, CPU cores and ABI and selects LOW_RAM, BALANCED or PERFORMANCE
 
 ## Status
 v0.1.0 — camera capture foundation + adaptive device profile.
+
+## Scanner v0.2
+
+Implemented:
+- CameraX multi-frame JPEG capture
+- A05s/A27 adaptive LOW_RAM, BALANCED and PERFORMANCE profiles
+- Local scan storage and scan metadata
+- Lightweight mesh generation with quality levels
+- OBJ export
+- GLB 2.0 export
+- No cloud/server dependency
+
+The current mesh is a lightweight geometry proxy so the APK remains small and stable on low-RAM phones. True learned camera-to-depth reconstruction, texture projection, and ONNX/TFLite GPU/NPU inference are deliberately not claimed as complete until an actual model is bundled and validated.
