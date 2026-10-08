@@ -47,7 +47,7 @@ class DepthAiEngine(
             try {
                 val compatibility = CompatibilityList()
                 if (compatibility.isDelegateSupportedOnThisDevice) {
-                    val delegate = GpuDelegate(compatibility.bestOptionsForThisDevice)
+                    val delegate = GpuDelegate()
                     try {
                         val gpuOptions = Interpreter.Options().apply {
                             setNumThreads(4)
