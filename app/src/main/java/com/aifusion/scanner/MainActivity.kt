@@ -128,7 +128,6 @@ class MainActivity : ComponentActivity() {
                     scanSession.recordFrame(file)
                     scanSession.recordTracking(frameCount, snapshot)
                     coverage.update(snapshot)
-                    updateMiniPreview(file)
                     coverageText.text = coverage.percent().toString() + "% covered"
                     scanStatus.text = "AI Depth " + depthAi.backend + " • LIVE • " + coverage.guidance() + " • frames: " + frameCount
                     if (scanning) previewHandler.postDelayed({ captureFrame() }, if (profile.mode == ScanMode.LOW_RAM) 900L else 550L)
@@ -216,12 +215,6 @@ class MainActivity : ComponentActivity() {
         val bytes = out.toByteArray()
         val opts = BitmapFactory.Options().apply { inSampleSize = if (profile.mode == ScanMode.LOW_RAM) 16 else 10 }
         return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)
-    }
-
-    private fun updateMiniPreview(file: File) {
-        val options = BitmapFactory.Options().apply { inSampleSize = 8 }
-        val bitmap = BitmapFactory.decodeFile(file.absolutePath, options)
-        if (bitmap != null && !scanning) bitmap.recycle()
     }
 
     private fun finishScan() {
