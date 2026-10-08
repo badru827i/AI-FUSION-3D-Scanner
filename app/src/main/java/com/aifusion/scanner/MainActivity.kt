@@ -23,7 +23,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var deviceStatus: TextView
     private lateinit var scanStatus: TextView
     private lateinit var startButton: Button
-    private lateinit var miniPreview: ScanMiniPreviewView
+    private lateinit var miniPreview: Scan3DPreviewView
     private lateinit var coverageText: TextView
     private lateinit var profile: DeviceProfile
     private lateinit var imageCapture: ImageCapture
