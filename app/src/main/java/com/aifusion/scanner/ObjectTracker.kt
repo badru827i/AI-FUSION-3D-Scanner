@@ -21,8 +21,8 @@ class ObjectTracker {
     fun lock(bitmap: Bitmap, nx: Float, ny: Float) {
         val x = (nx * bitmap.width).toInt().coerceIn(0, bitmap.width - 1)
         val y = (ny * bitmap.height).toInt().coerceIn(0, bitmap.height - 1)
-        patchW = max(12, min(bitmap.width / 5, 44))
-        patchH = max(12, min(bitmap.height / 5, 44))
+        patchW = max(10, min(bitmap.width / 7, 24))
+        patchH = max(10, min(bitmap.height / 7, 24))
         if (bitmap.width < patchW || bitmap.height < patchH) { active = false; return }
         patch = samplePatch(bitmap, x, y, patchW, patchH)
         centerX = x / bitmap.width.toFloat()
@@ -34,8 +34,8 @@ class ObjectTracker {
         if (!active || patch.isEmpty()) return ObjectTrackResult(centerX, centerY, 0f, false)
         val cx = (centerX * bitmap.width).toInt()
         val cy = (centerY * bitmap.height).toInt()
-        val radius = max(18, min(52, bitmap.width / 4))
-        val step = 3
+        val radius = max(14, min(36, bitmap.width / 5))
+        val step = 4
         var bestScore = Float.MAX_VALUE
         var bestX = cx
         var bestY = cy
