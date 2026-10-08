@@ -13,15 +13,21 @@ class ScanSession(private val context: Context, private val profile: DeviceProfi
     lateinit var framesDir: File
         private set
     private val frames = mutableListOf<File>()
+    private val tracking = mutableListOf<TrackingSnapshot>()
 
     fun start() {
         framesDir = File(root, "scan_\${System.currentTimeMillis()}/frames")
         framesDir.mkdirs()
         frames.clear()
+        tracking.clear()
     }
 
     fun recordFrame(file: File) {
         if (file.exists()) frames += file
+    }
+
+    fun recordTracking(frame: Int, snapshot: TrackingSnapshot) {
+        tracking += snapshot
     }
 
     fun buildResult(frameCount: Int): ScanResult {
@@ -38,7 +44,7 @@ class ScanSession(private val context: Context, private val profile: DeviceProfi
         val glb = File(dir, "\$name.glb")
         MeshExporter.writeGlb(glb, mesh)
         File(dir, "scan.json").writeText(
-            """{"frames":\$frameCount,"mode":"\${profile.mode}","reconstruction":"camera-multiview-proxy","obj":"\${obj.name}","glb":"\${glb.name}"}"""
+            """{"frames":\$frameCount,"mode":"\${profile.mode}","reconstruction":"camera-multiview-proxy","trackingFrames":\${tracking.size},"trackingQuality":"\${tracking.lastOrNull()?.quality ?: "UNKNOWN"}","obj":"\${obj.name}","glb":"\${glb.name}"}"""
         )
         return ScanResult(name, dir, obj, glb)
     }
