@@ -24,6 +24,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var startButton: Button
     private lateinit var profile: DeviceProfile
     private lateinit var imageCapture: ImageCapture
+    private lateinit var tracker: CameraTracking
     private var scanning = false
     private var frameCount = 0
     private lateinit var scanSession: ScanSession
@@ -36,6 +37,7 @@ class MainActivity : ComponentActivity() {
         scanStatus = findViewById(R.id.scanStatus)
         startButton = findViewById(R.id.startScan)
         profile = SmartDeviceEngine.detect(this)
+        tracker = CameraTracking(this, profile)
         scanSession = ScanSession(this, profile)
         deviceStatus.text = "AI-FUSION • " + SmartDeviceEngine.summary(profile)
         startButton.setOnClickListener { if (!scanning) startScan() else finishScan() }
@@ -69,9 +71,10 @@ class MainActivity : ComponentActivity() {
     private fun startScan() {
         scanning = true
         frameCount = 0
+        tracker.start()
         scanSession.start()
         startButton.text = "Capture frame"
-        scanStatus.text = "Scan started • tap to capture • frames: 0"
+        scanStatus.text = "Scan started • tracking: ${tracker.status()} • frames: 0"
         captureFrame()
     }
 
@@ -84,7 +87,8 @@ class MainActivity : ComponentActivity() {
                 override fun onImageSaved(output: ImageCapture.OutputFileResults) {
                     frameCount++
                     scanSession.recordFrame(file)
-                    scanStatus.text = "Scanning • frames: $frameCount • capture next angle"
+                    scanSession.recordTracking(frameCount, tracker.snapshot())
+                    scanStatus.text = "Scanning • ${tracker.status()} • frames: $frameCount"
                 }
                 override fun onError(exception: ImageCaptureException) {
                     scanStatus.text = "Capture error: ${exception.message ?: "unknown"}"
@@ -94,10 +98,16 @@ class MainActivity : ComponentActivity() {
 
     private fun finishScan() {
         scanning = false
+        tracker.stop()
         startButton.text = "Start 3D Scan"
         val result = scanSession.buildResult(frameCount)
-        scanStatus.text = "Scan saved • $frameCount frames • OBJ + GLB exported"
+        scanStatus.text = "Scan saved • $frameCount frames • tracking: ${tracker.status()} • OBJ + GLB exported"
         Toast.makeText(this, "Saved: ${result.name}", Toast.LENGTH_LONG).show()
+    }
+
+    override fun onDestroy() {
+        tracker.stop()
+        super.onDestroy()
     }
 
     override fun onBackPressed() {
