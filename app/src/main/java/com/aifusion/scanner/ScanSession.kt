@@ -39,12 +39,12 @@ class ScanSession(private val context: Context, private val profile: DeviceProfi
             ScanMode.PERFORMANCE -> 36
         }
         val mesh = MeshGenerator.radialProxy(frameCount.coerceAtLeast(3), quality)
-        val obj = File(dir, "\$name.obj")
+        val obj = File(dir, "$name.obj")
         MeshExporter.writeObj(obj, mesh)
-        val glb = File(dir, "\$name.glb")
+        val glb = File(dir, "$name.glb")
         MeshExporter.writeGlb(glb, mesh)
         File(dir, "scan.json").writeText(
-            """{"frames":\$frameCount,"mode":"${profile.mode}","reconstruction":"camera-multiview-proxy","trackingFrames":${tracking.size},"trackingQuality":"${tracking.lastOrNull()?.quality ?: "UNKNOWN"}","obj":"${obj.name}","glb":"${glb.name}"}"""
+            """{"frames":$frameCount,"mode":"${profile.mode}","reconstruction":"camera-multiview-proxy","trackingFrames":${tracking.size},"trackingQuality":"${tracking.lastOrNull()?.quality ?: "UNKNOWN"}","obj":"${obj.name}","glb":"${glb.name}"}"""
         )
         return ScanResult(name, dir, obj, glb)
     }
