@@ -35,6 +35,10 @@ class MainActivity : ComponentActivity() {
     private lateinit var scanStatus: TextView
     private lateinit var startButton: Button
     private lateinit var miniPreview: Scan3DPreviewView
+    private lateinit var trackingOverlay: TrackingOverlayView
+    private val objectTracker = ObjectTracker()
+    @Volatile private var pendingTargetX: Float? = null
+    @Volatile private var pendingTargetY: Float? = null
     private lateinit var coverageText: TextView
     private lateinit var profile: DeviceProfile
     private lateinit var imageCapture: ImageCapture
@@ -58,6 +62,12 @@ class MainActivity : ComponentActivity() {
         scanStatus = findViewById(R.id.scanStatus)
         startButton = findViewById(R.id.startScan)
         miniPreview = findViewById(R.id.miniPreview)
+        trackingOverlay = findViewById(R.id.trackingOverlay)
+        trackingOverlay.onTargetSelected = { x, y ->
+            pendingTargetX = x
+            pendingTargetY = y
+            scanStatus.text = if (scanning) "Target selected • locking object…" else "Target selected • press Start 3D Scan"
+        }
         coverageText = findViewById(R.id.coverageText)
 
         profile = SmartDeviceEngine.detect(this)
@@ -111,11 +121,13 @@ class MainActivity : ComponentActivity() {
         coverage.reset()
         miniPreview.clear()
         tracker.start()
+        objectTracker.clear()
+        trackingOverlay.clearTarget()
         temporalDepth.reset()
         scanSession.start()
         startButton.text = "Stop 3D Scan"
         coverageText.text = "0% covered • LIVE"
-        scanStatus.text = "AI Depth " + depthAi.backend + " • scanning live • frames: 0"
+        scanStatus.text = "AI Depth " + depthAi.backend + " • tap object to lock • frames: 0"
         captureFrame()
     }
 
@@ -163,6 +175,23 @@ class MainActivity : ComponentActivity() {
         val bitmap = imageToBitmap(image)
         image.close()
         if (bitmap == null) return
+
+        val requestX = pendingTargetX
+        val requestY = pendingTargetY
+        if (requestX != null && requestY != null) {
+            objectTracker.lock(bitmap, requestX, requestY)
+            pendingTargetX = null
+            pendingTargetY = null
+            runOnUiThread { if (scanning) scanStatus.text = "Object locked • tracking + AI depth" }
+        }
+        val track = objectTracker.update(bitmap)
+        runOnUiThread {
+            if (scanning && track.tracked) {
+                trackingOverlay.setTarget(track.x, track.y, active = true)
+            } else if (scanning && objectTracker.isActive()) {
+                trackingOverlay.setTracking(false)
+            }
+        }
 
         val snapshot = tracker.snapshot()
         if (snapshot.quality == "TOO_FAST") {
@@ -242,6 +271,8 @@ class MainActivity : ComponentActivity() {
         scanning = false
         tracker.stop()
         temporalDepth.reset()
+        objectTracker.clear()
+        trackingOverlay.clearTarget()
         startButton.text = "Start 3D Scan"
         val result = scanSession.buildResult(frameCount)
         scanStatus.text = "Scan saved • " + frameCount + " frames • " + coverage.percent() + "% guide coverage • OBJ + GLB exported"
@@ -252,6 +283,8 @@ class MainActivity : ComponentActivity() {
         scanning = false
         tracker.stop()
         temporalDepth.reset()
+        objectTracker.clear()
+        trackingOverlay.clearTarget()
         previewHandler.removeCallbacksAndMessages(null)
         depthAi.close()
         aiExecutor.shutdownNow()
