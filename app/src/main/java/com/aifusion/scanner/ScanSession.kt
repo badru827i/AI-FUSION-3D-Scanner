@@ -16,7 +16,7 @@ class ScanSession(private val context: Context, private val profile: DeviceProfi
     private val tracking = mutableListOf<TrackingSnapshot>()
 
     fun start() {
-        framesDir = File(root, "scan_\${System.currentTimeMillis()}/frames")
+        framesDir = File(root, "scan_${System.currentTimeMillis()}/frames")
         framesDir.mkdirs()
         frames.clear()
         tracking.clear()
@@ -44,7 +44,7 @@ class ScanSession(private val context: Context, private val profile: DeviceProfi
         val glb = File(dir, "\$name.glb")
         MeshExporter.writeGlb(glb, mesh)
         File(dir, "scan.json").writeText(
-            """{"frames":\$frameCount,"mode":"\${profile.mode}","reconstruction":"camera-multiview-proxy","trackingFrames":\${tracking.size},"trackingQuality":"\${tracking.lastOrNull()?.quality ?: "UNKNOWN"}","obj":"\${obj.name}","glb":"\${glb.name}"}"""
+            """{"frames":\$frameCount,"mode":"${profile.mode}","reconstruction":"camera-multiview-proxy","trackingFrames":${tracking.size},"trackingQuality":"${tracking.lastOrNull()?.quality ?: "UNKNOWN"}","obj":"${obj.name}","glb":"${glb.name}"}"""
         )
         return ScanResult(name, dir, obj, glb)
     }
@@ -94,7 +94,7 @@ object MeshExporter {
             }
             var j = 0
             while (j < mesh.indices.size) {
-                w.append("f \${mesh.indices[j]+1} \${mesh.indices[j+1]+1} \${mesh.indices[j+2]+1}\n")
+                w.append("f ${mesh.indices[j]+1} ${mesh.indices[j+1]+1} ${mesh.indices[j+2]+1}\n")
                 j += 3
             }
         }
@@ -108,7 +108,7 @@ object MeshExporter {
         val bin = ByteArray(pos.position() + ind.position())
         System.arraycopy(pos.array(), 0, bin, 0, pos.position())
         System.arraycopy(ind.array(), 0, bin, pos.position(), ind.position())
-        val json = """{"asset":{"version":"2.0","generator":"AI-FUSION 3D Scanner"},"buffers":[{"byteLength":\${bin.size}}],"bufferViews":[{"buffer":0,"byteOffset":0,"byteLength":\${pos.position()},"target":34962},{"buffer":0,"byteOffset":\${pos.position()},"byteLength":\${ind.position()},"target":34963}],"accessors":[{"bufferView":0,"componentType":5126,"count":\${mesh.vertices.size/3},"type":"VEC3"},{"bufferView":1,"componentType":5125,"count":\${mesh.indices.size},"type":"SCALAR"}],"meshes":[{"primitives":[{"attributes":{"POSITION":0},"indices":1}]}],"nodes":[{"mesh":0}],"scenes":[{"nodes":[0]}],"scene":0}"""
+        val json = """{"asset":{"version":"2.0","generator":"AI-FUSION 3D Scanner"},"buffers":[{"byteLength":${bin.size}}],"bufferViews":[{"buffer":0,"byteOffset":0,"byteLength":${pos.position()},"target":34962},{"buffer":0,"byteOffset":${pos.position()},"byteLength":${ind.position()},"target":34963}],"accessors":[{"bufferView":0,"componentType":5126,"count":${mesh.vertices.size/3},"type":"VEC3"},{"bufferView":1,"componentType":5125,"count":${mesh.indices.size},"type":"SCALAR"}],"meshes":[{"primitives":[{"attributes":{"POSITION":0},"indices":1}]}],"nodes":[{"mesh":0}],"scenes":[{"nodes":[0]}],"scene":0}"""
         val jb = json.toByteArray(Charsets.UTF_8)
         val jp = (4 - jb.size % 4) % 4
         val bp = (4 - bin.size % 4) % 4
