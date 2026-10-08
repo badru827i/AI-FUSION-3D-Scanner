@@ -3,6 +3,7 @@ on:
   push:
     branches: [ "main" ]
   workflow_dispatch:
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -11,28 +12,39 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
       - name: Download compact depth AI model
+        shell: bash
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y git-lfs
-          git lfs install
-          git clone --depth 1 https://huggingface.co/Devil-Assassin/wandering-mode /tmp/depth-model
-          test -s /tmp/depth-model/midas_v21_small_256.tflite
+          set -euo pipefail
           mkdir -p app/src/main/assets
-          cp /tmp/depth-model/midas_v21_small_256.tflite app/src/main/assets/midas_v21_small_256.tflite
+          MODEL_URL="https://huggingface.co/Devil-Assassin/wandering-mode/resolve/main/midas_v21_small_256.tflite?download=true"
+          curl -L --fail --retry 4 --retry-all-errors --connect-timeout 20 --max-time 300             -o app/src/main/assets/midas_v21_small_256.tflite "$MODEL_URL"
+          test -s app/src/main/assets/midas_v21_small_256.tflite
+          SIZE=$(stat -c%s app/src/main/assets/midas_v21_small_256.tflite)
+          echo "Depth model bytes: $SIZE"
+          if [ "$SIZE" -lt 1000000 ]; then
+            echo "Downloaded file is unexpectedly small; refusing to build."
+            file app/src/main/assets/midas_v21_small_256.tflite
+            exit 1
+          fi
           ls -lh app/src/main/assets/midas_v21_small_256.tflite
+
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
           cache: gradle
+
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.10.2"
+
       - name: Build debug APK
         run: gradle --no-daemon :app:assembleDebug
+
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
