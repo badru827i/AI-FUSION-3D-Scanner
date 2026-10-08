@@ -1,70 +1,37 @@
 <?xml version="1.0" encoding="utf-8"?>
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
-    android:layout_width="match_parent"
-    android:layout_height="match_parent">
-
+    android:layout_width="match_parent" android:layout_height="match_parent">
     <androidx.camera.view.PreviewView
-        android:id="@+id/preview"
-        android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        app:implementationMode="performance"
-        app:scaleType="fillCenter" />
-
+        android:id="@+id/preview" android:layout_width="match_parent" android:layout_height="match_parent"
+        app:implementationMode="performance" app:scaleType="fillCenter" />
+    <com.aifusion.scanner.TrackingOverlayView
+        android:id="@+id/trackingOverlay" android:layout_width="match_parent" android:layout_height="match_parent"
+        android:clickable="true" android:focusable="true" />
     <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_gravity="top"
-        android:orientation="vertical"
-        android:padding="16dp"
-        android:background="#AAFFFFFF">
-
+        android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_gravity="top"
+        android:orientation="vertical" android:paddingStart="14dp" android:paddingTop="12dp" android:paddingEnd="14dp"
+        android:paddingBottom="10dp" android:background="#CC0B1015">
         <TextView
-            android:id="@+id/deviceStatus"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="Device Engine"
-            android:textStyle="bold"
-            android:textSize="16sp" />
-
+            android:id="@+id/deviceStatus" android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:text="AI-FUSION • Device Engine" android:textColor="#FFFFFFFF" android:textStyle="bold"
+            android:textSize="14sp" android:maxLines="1" android:ellipsize="end" />
         <TextView
-            android:id="@+id/scanStatus"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="Ready to scan"
-            android:textSize="14sp" />
+            android:id="@+id/scanStatus" android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:layout_marginTop="3dp" android:text="Ready • tap an object to track"
+            android:textColor="#D9FFFFFF" android:textSize="12sp" android:maxLines="2" android:ellipsize="end" />
     </LinearLayout>
-
     <LinearLayout
-        android:layout_width="128dp"
-        android:layout_height="156dp"
-        android:layout_gravity="top|end"
-        android:layout_marginTop="92dp"
-        android:layout_marginEnd="12dp"
-        android:orientation="vertical">
-
+        android:layout_width="142dp" android:layout_height="170dp" android:layout_gravity="top|end"
+        android:layout_marginTop="78dp" android:layout_marginEnd="10dp" android:orientation="vertical">
         <com.aifusion.scanner.Scan3DPreviewView
-            android:id="@+id/miniPreview"
-            android:layout_width="match_parent"
-            android:layout_height="128dp" />
-
+            android:id="@+id/miniPreview" android:layout_width="match_parent" android:layout_height="142dp" />
         <TextView
-            android:id="@+id/coverageText"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:gravity="center"
-            android:text="0% covered"
-            android:textColor="#FFFFFFFF"
-            android:textSize="12sp"
-            android:textStyle="bold"
-            android:background="#99000000" />
+            android:id="@+id/coverageText" android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:gravity="center" android:padding="3dp" android:text="0% • READY"
+            android:textColor="#FFFFFFFF" android:textSize="11sp" android:textStyle="bold" android:background="#CC0B1015" />
     </LinearLayout>
-
     <Button
-        android:id="@+id/startScan"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_gravity="bottom|center_horizontal"
-        android:layout_marginBottom="32dp"
-        android:text="Start 3D Scan" />
+        android:id="@+id/startScan" android:layout_width="wrap_content" android:layout_height="wrap_content"
+        android:layout_gravity="bottom|center_horizontal" android:layout_marginBottom="30dp" android:text="Start 3D Scan" />
 </FrameLayout>
