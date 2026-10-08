@@ -63,7 +63,8 @@ class DepthAiEngine(
 
     fun estimate(bitmap: Bitmap): DepthResult {
         val start = SystemClock.elapsedRealtime()
-        val input = ByteBuffer.allocateDirect(SIZE * SIZE * 3 * 4).order(ByteOrder.nativeOrder())
+        val input = ByteBuffer.allocateDirect(SIZE * SIZE * 3 * 4)
+            .order(ByteOrder.nativeOrder())
         val scaled = Bitmap.createScaledBitmap(bitmap, SIZE, SIZE, true)
         val pixels = IntArray(SIZE * SIZE)
         scaled.getPixels(pixels, 0, SIZE, 0, 0, SIZE, SIZE)
@@ -74,23 +75,49 @@ class DepthAiEngine(
         }
         input.rewind()
 
-        val output = Array(1) { Array(SIZE) { FloatArray(SIZE) } }
+        val outputTensor = interpreter.getOutputTensor(0)
+        val outputCount = outputTensor.numElements()
+        val output = ByteBuffer.allocateDirect(outputCount * 4).order(ByteOrder.nativeOrder())
         interpreter.run(input, output)
+        output.rewind()
 
-        val depth = FloatArray(SIZE * SIZE)
+        val raw = FloatArray(outputCount)
+        for (i in raw.indices) raw[i] = output.float
+
+        val outShape = outputTensor.shape()
+        val outHeight = when {
+            outShape.size >= 3 -> outShape[outShape.size - 2]
+            else -> SIZE
+        }.coerceAtLeast(1)
+        val outWidth = when {
+            outShape.size >= 2 -> outShape[outShape.size - 1]
+            else -> SIZE
+        }.coerceAtLeast(1)
+
+        val planeSize = outWidth * outHeight
+        val depth = FloatArray(planeSize)
+        val offset = (raw.size - planeSize).coerceAtLeast(0)
         var minV = Float.POSITIVE_INFINITY
         var maxV = Float.NEGATIVE_INFINITY
-        for (y in 0 until SIZE) for (x in 0 until SIZE) {
-            val v = output[0][y][x]
-            depth[y * SIZE + x] = v
+
+        for (i in depth.indices) {
+            val v = raw[offset + i]
+            depth[i] = v
             minV = min(minV, v)
             maxV = max(maxV, v)
         }
+
         val range = max(1e-6f, maxV - minV)
         for (i in depth.indices) depth[i] = (depth[i] - minV) / range
 
         if (scaled !== bitmap) scaled.recycle()
-        return DepthResult(depth, SIZE, SIZE, backend, SystemClock.elapsedRealtime() - start)
+        return DepthResult(
+            depth = depth,
+            width = outWidth,
+            height = outHeight,
+            backend = backend,
+            inferenceMs = SystemClock.elapsedRealtime() - start
+        )
     }
 
     override fun close() {
