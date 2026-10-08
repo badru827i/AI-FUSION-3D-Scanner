@@ -18,11 +18,10 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p app/src/main/assets
-          python -m pip install --disable-pip-version-check --no-input --quiet --upgrade huggingface_hub
-          hf download litert-community/MiDaS-small midas_small_256_fp16.tflite \
-            --repo-type model \
-            --local-dir app/src/main/assets
           MODEL="app/src/main/assets/midas_small_256_fp16.tflite"
+          URL="https://huggingface.co/litert-community/MiDaS-small/resolve/main/midas_small_256_fp16.tflite?download=true"
+          curl --fail --show-error --location --retry 5 --retry-delay 2 --connect-timeout 20 --max-time 300 \
+            -o "$MODEL" "$URL"
           test -s "$MODEL"
           SIZE=$(stat -c%s "$MODEL")
           echo "Depth model bytes: $SIZE"
