@@ -24,10 +24,10 @@ jobs:
           test -s "$MODEL"
           SIZE=$(stat -c%s "$MODEL")
           echo "Depth model bytes: $SIZE"
-          test "$SIZE" -eq 66306460
+          test "$SIZE" -eq 33507904
           SHA=$(sha256sum "$MODEL" | cut -d' ' -f1)
           echo "Depth model SHA256: $SHA"
-          test "$SHA" = "70404b5c7b203aad381f588df05099e0b8dc4bc472d51c9c9eff729ccb64d073"
+          test "$SHA" = "bec9bce704789e504ec306196fcb0aabe90fd25c2b9d7db382339741950890ca"
           ls -lh "$MODEL"
 
       - name: Set up JDK 17
