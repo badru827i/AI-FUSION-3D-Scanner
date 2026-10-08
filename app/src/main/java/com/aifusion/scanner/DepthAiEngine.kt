@@ -30,7 +30,7 @@ class DepthAiEngine(
     }
 
     private var gpuDelegate: GpuDelegate? = null
-    private var interpreter: Interpreter
+    private lateinit var interpreter: Interpreter
     var backend: String = "CPU"
         private set
 
@@ -38,6 +38,8 @@ class DepthAiEngine(
         val cpuOptions = Interpreter.Options().apply {
             setNumThreads(if (profile.mode == ScanMode.LOW_RAM) 2 else 4)
         }
+
+        val model = loadModel()
 
         if (profile.mode != ScanMode.LOW_RAM) {
             try {
@@ -49,10 +51,10 @@ class DepthAiEngine(
                         addDelegate(delegate)
                     }
                     try {
-                        interpreter = Interpreter(loadModel(), gpuOptions)
+                        model.rewind()
+                        interpreter = Interpreter(model, gpuOptions)
                         gpuDelegate = delegate
                         backend = "GPU"
-                        return
                     } catch (_: Throwable) {
                         delegate.close()
                     }
@@ -62,8 +64,11 @@ class DepthAiEngine(
             }
         }
 
-        interpreter = Interpreter(loadModel(), cpuOptions)
-        backend = "CPU"
+        if (!::interpreter.isInitialized) {
+            model.rewind()
+            interpreter = Interpreter(model, cpuOptions)
+            backend = "CPU"
+        }
     }
 
     private fun loadModel(): ByteBuffer {
