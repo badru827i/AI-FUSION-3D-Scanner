@@ -18,17 +18,17 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p app/src/main/assets
-          MODEL_URL="https://huggingface.co/Devil-Assassin/wandering-mode/resolve/main/midas_v21_small_256.tflite?download=true"
-          curl -L --fail --retry 4 --retry-all-errors --connect-timeout 20 --max-time 300             -o app/src/main/assets/midas_v21_small_256.tflite "$MODEL_URL"
-          test -s app/src/main/assets/midas_v21_small_256.tflite
-          SIZE=$(stat -c%s app/src/main/assets/midas_v21_small_256.tflite)
+          python -m pip install --disable-pip-version-check --no-input --quiet --upgrade huggingface_hub
+          hf download Devil-Assassin/wandering-mode midas_v21_small_256.tflite             --repo-type model             --local-dir app/src/main/assets
+          MODEL="app/src/main/assets/midas_v21_small_256.tflite"
+          test -s "$MODEL"
+          SIZE=$(stat -c%s "$MODEL")
           echo "Depth model bytes: $SIZE"
-          if [ "$SIZE" -lt 1000000 ]; then
-            echo "Downloaded file is unexpectedly small; refusing to build."
-            file app/src/main/assets/midas_v21_small_256.tflite
-            exit 1
-          fi
-          ls -lh app/src/main/assets/midas_v21_small_256.tflite
+          test "$SIZE" -eq 66306460
+          SHA=$(sha256sum "$MODEL" | cut -d' ' -f1)
+          echo "Depth model SHA256: $SHA"
+          test "$SHA" = "70404b5c7b203aad381f588df05099e0b8dc4bc472d51c9c9eff729ccb64d073"
+          ls -lh "$MODEL"
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -50,5 +50,3 @@ jobs:
         with:
           name: AI-FUSION-3D-Scanner-debug
           path: app/build/outputs/apk/debug/app-debug.apk
-
-# v0.7 compact local depth AI build
