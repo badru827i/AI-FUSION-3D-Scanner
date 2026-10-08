@@ -25,7 +25,7 @@ class DepthAiEngine(
 ) : AutoCloseable {
 
     companion object {
-        private const val MODEL = "midas_v21_small_256.tflite"
+        private const val MODEL = "midas_small_256_fp16.tflite"
         private const val SIZE = 256
     }
 
@@ -92,9 +92,9 @@ class DepthAiEngine(
             val pixels = IntArray(SIZE * SIZE)
             scaled.getPixels(pixels, 0, SIZE, 0, 0, SIZE, SIZE)
             for (pixel in pixels) {
-                input.putFloat(((pixel shr 16) and 255) / 255f)
-                input.putFloat(((pixel shr 8) and 255) / 255f)
-                input.putFloat((pixel and 255) / 255f)
+                input.putFloat((((pixel shr 16) and 255) / 255f - 0.485f) / 0.229f)
+                input.putFloat((((pixel shr 8) and 255) / 255f - 0.456f) / 0.224f)
+                input.putFloat(((pixel and 255) / 255f - 0.406f) / 0.225f)
             }
             input.rewind()
 
