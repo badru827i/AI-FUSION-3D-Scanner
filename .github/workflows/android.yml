@@ -13,8 +13,13 @@ jobs:
         uses: actions/checkout@v4
       - name: Download compact depth AI model
         run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y git-lfs
+          git lfs install
+          git clone --depth 1 https://huggingface.co/Devil-Assassin/wandering-mode /tmp/depth-model
+          test -s /tmp/depth-model/midas_v21_small_256.tflite
           mkdir -p app/src/main/assets
-          curl -L --fail --retry 3 "https://huggingface.co/Devil-Assassin/wandering-mode/resolve/main/midas_v21_small_256.tflite?download=true" -o app/src/main/assets/midas_v21_small_256.tflite
+          cp /tmp/depth-model/midas_v21_small_256.tflite app/src/main/assets/midas_v21_small_256.tflite
           ls -lh app/src/main/assets/midas_v21_small_256.tflite
       - name: Set up JDK 17
         uses: actions/setup-java@v4
