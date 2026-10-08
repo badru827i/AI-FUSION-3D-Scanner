@@ -46,6 +46,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var coverage: ScanCoverage
     private lateinit var scanSession: ScanSession
     private lateinit var depthAi: DepthAiEngine
+    private val temporalDepth = TemporalDepthFilter()
     private var scanning = false
     private var frameCount = 0
 
@@ -110,6 +111,7 @@ class MainActivity : ComponentActivity() {
         coverage.reset()
         miniPreview.clear()
         tracker.start()
+        temporalDepth.reset()
         scanSession.start()
         startButton.text = "Stop 3D Scan"
         coverageText.text = "0% covered • LIVE"
@@ -124,13 +126,18 @@ class MainActivity : ComponentActivity() {
         imageCapture.takePicture(options, ContextCompat.getMainExecutor(this),
             object : ImageCapture.OnImageSavedCallback {
                 override fun onImageSaved(output: ImageCapture.OutputFileResults) {
-                    frameCount++
                     val snapshot = tracker.snapshot()
-                    scanSession.recordFrame(file)
-                    scanSession.recordTracking(frameCount, snapshot)
-                    coverage.update(snapshot)
-                    coverageText.text = coverage.percent().toString() + "% covered"
-                    scanStatus.text = "AI Depth " + depthAi.backend + " • LIVE • " + coverage.guidance() + " • frames: " + frameCount
+                    if (snapshot.quality == "TOO_FAST") {
+                        file.delete()
+                        scanStatus.text = "Move slower • frame skipped • tracking"
+                    } else {
+                        frameCount++
+                        scanSession.recordFrame(file)
+                        scanSession.recordTracking(frameCount, snapshot)
+                        coverage.update(snapshot)
+                        coverageText.text = coverage.percent().toString() + "% covered"
+                        scanStatus.text = "AI Depth " + depthAi.backend + " • LIVE • " + coverage.guidance() + " • frames: " + frameCount
+                    }
                     if (scanning) previewHandler.postDelayed({ captureFrame() }, if (profile.mode == ScanMode.LOW_RAM) 900L else 550L)
                 }
 
@@ -157,13 +164,28 @@ class MainActivity : ComponentActivity() {
         image.close()
         if (bitmap == null) return
 
+        val snapshot = tracker.snapshot()
+        if (snapshot.quality == "TOO_FAST") {
+            bitmap.recycle()
+            runOnUiThread {
+                if (scanning) scanStatus.text = "Move slower • AI depth paused • tracking"
+            }
+            return
+        }
+
         try {
             val result = depthAi.estimate(bitmap)
-            val depthBitmap = depthToBitmap(result.depth, result.width, result.height)
+            val stableDepth = temporalDepth.filter(
+                result.depth,
+                result.width,
+                result.height,
+                snapshot.motion,
+                snapshot.quality
+            )
+            val depthBitmap = depthToBitmap(stableDepth, result.width, result.height)
             bitmap.recycle()
             runOnUiThread {
                 if (scanning) {
-                    val snapshot = tracker.snapshot()
                     coverage.update(snapshot)
                     miniPreview.setDepthPreview(depthBitmap, coverage)
                     coverageText.text = coverage.percent().toString() + "% covered • AI depth • " + result.inferenceMs + "ms"
@@ -219,6 +241,7 @@ class MainActivity : ComponentActivity() {
     private fun finishScan() {
         scanning = false
         tracker.stop()
+        temporalDepth.reset()
         startButton.text = "Start 3D Scan"
         val result = scanSession.buildResult(frameCount)
         scanStatus.text = "Scan saved • " + frameCount + " frames • " + coverage.percent() + "% guide coverage • OBJ + GLB exported"
@@ -228,6 +251,7 @@ class MainActivity : ComponentActivity() {
     override fun onDestroy() {
         scanning = false
         tracker.stop()
+        temporalDepth.reset()
         previewHandler.removeCallbacksAndMessages(null)
         depthAi.close()
         aiExecutor.shutdownNow()
