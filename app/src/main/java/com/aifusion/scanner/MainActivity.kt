@@ -95,7 +95,7 @@ class MainActivity : ComponentActivity() {
                 .setImageQueueDepth(1)
                 .build()
                 .also { analysis ->
-                    analysis.setAnalyzer(ContextCompat.getMainExecutor(this)) { image -> analyzeLiveFrame(image) }
+                    analysis.setAnalyzer(aiExecutor) { image -> analyzeLiveFrame(image) }
                 }
             provider.unbindAll()
             provider.bindToLifecycle(this, CameraSelector.DEFAULT_BACK_CAMERA, preview, imageCapture, imageAnalysis)
@@ -106,6 +106,7 @@ class MainActivity : ComponentActivity() {
     private fun startScan() {
         scanning = true
         frameCount = 0
+        lastPreviewMs = 0L
         coverage.reset()
         miniPreview.clear()
         tracker.start()
@@ -156,27 +157,25 @@ class MainActivity : ComponentActivity() {
         image.close()
         if (bitmap == null) return
 
-        aiExecutor.execute {
-            try {
-                val result = depthAi.estimate(bitmap)
-                val depthBitmap = depthToBitmap(result.depth, result.width, result.height)
-                bitmap.recycle()
-                runOnUiThread {
-                    if (scanning) {
-                        val snapshot = tracker.snapshot()
-                        coverage.update(snapshot)
-                        miniPreview.setDepthPreview(depthBitmap, coverage)
-                        coverageText.text = coverage.percent().toString() + "% covered • AI depth • " + result.inferenceMs + "ms"
-                        scanStatus.text = "AI Depth " + result.backend + " • " + result.inferenceMs + "ms • LIVE 3D"
-                    } else {
-                        depthBitmap.recycle()
-                    }
+        try {
+            val result = depthAi.estimate(bitmap)
+            val depthBitmap = depthToBitmap(result.depth, result.width, result.height)
+            bitmap.recycle()
+            runOnUiThread {
+                if (scanning) {
+                    val snapshot = tracker.snapshot()
+                    coverage.update(snapshot)
+                    miniPreview.setDepthPreview(depthBitmap, coverage)
+                    coverageText.text = coverage.percent().toString() + "% covered • AI depth • " + result.inferenceMs + "ms"
+                    scanStatus.text = "AI Depth " + result.backend + " • " + result.inferenceMs + "ms • LIVE 3D"
+                } else {
+                    depthBitmap.recycle()
                 }
-            } catch (t: Throwable) {
-                bitmap.recycle()
-                runOnUiThread {
-                    if (scanning) scanStatus.text = "AI Depth fallback • " + (t.message ?: "inference unavailable")
-                }
+            }
+        } catch (t: Throwable) {
+            bitmap.recycle()
+            runOnUiThread {
+                if (scanning) scanStatus.text = "AI Depth fallback • " + (t.message ?: "inference unavailable")
             }
         }
     }
