@@ -69,6 +69,9 @@ class DepthAiEngine(
             interpreter = Interpreter(model, cpuOptions)
             backend = "CPU"
         }
+
+        // Allocate tensors once before querying output metadata or running inference.
+        interpreter.allocateTensors()
     }
 
     private fun loadModel(): ByteBuffer {
@@ -100,6 +103,9 @@ class DepthAiEngine(
 
             val outputTensor = interpreter.getOutputTensor(0)
             val outputCount = outputTensor.numElements()
+            require(outputTensor.dataType() == org.tensorflow.lite.DataType.FLOAT32) {
+                "Unsupported depth output type: " + outputTensor.dataType()
+            }
             val output = ByteBuffer.allocateDirect(outputCount * 4)
                 .order(ByteOrder.nativeOrder())
 
