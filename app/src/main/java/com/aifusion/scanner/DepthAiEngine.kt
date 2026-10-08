@@ -41,22 +41,29 @@ class DepthAiEngine(
 
         val model = loadModel()
 
+        // Try GPU completely (including tensor allocation). Some devices expose a
+        // GPU delegate but fail during allocation, so CPU fallback must cover that too.
         if (profile.mode != ScanMode.LOW_RAM) {
             try {
                 val compatibility = CompatibilityList()
                 if (compatibility.isDelegateSupportedOnThisDevice) {
                     val delegate = GpuDelegate(compatibility.bestOptionsForThisDevice)
-                    val gpuOptions = Interpreter.Options().apply {
-                        setNumThreads(4)
-                        addDelegate(delegate)
-                    }
                     try {
+                        val gpuOptions = Interpreter.Options().apply {
+                            setNumThreads(4)
+                            addDelegate(delegate)
+                        }
                         model.rewind()
-                        interpreter = Interpreter(model, gpuOptions)
+                        val candidate = Interpreter(model, gpuOptions)
+                        candidate.allocateTensors()
+                        interpreter = candidate
                         gpuDelegate = delegate
                         backend = "GPU"
                     } catch (_: Throwable) {
-                        delegate.close()
+                        try {
+                            delegate.close()
+                        } catch (_: Throwable) {
+                        }
                     }
                 }
             } catch (_: Throwable) {
@@ -66,12 +73,11 @@ class DepthAiEngine(
 
         if (!::interpreter.isInitialized) {
             model.rewind()
-            interpreter = Interpreter(model, cpuOptions)
+            val candidate = Interpreter(model, cpuOptions)
+            candidate.allocateTensors()
+            interpreter = candidate
             backend = "CPU"
         }
-
-        // Allocate tensors once before querying output metadata or running inference.
-        interpreter.allocateTensors()
     }
 
     private fun loadModel(): ByteBuffer {
