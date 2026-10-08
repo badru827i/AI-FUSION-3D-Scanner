@@ -28,3 +28,5 @@ jobs:
         with:
           name: AI-FUSION-3D-Scanner-debug
           path: app/build/outputs/apk/debug/app-debug.apk
+
+# v0.2 scanner pipeline build verification
