@@ -11,6 +11,11 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+      - name: Download compact depth AI model
+        run: |
+          mkdir -p app/src/main/assets
+          curl -L --fail --retry 3 "https://huggingface.co/Devil-Assassin/wandering-mode/resolve/main/midas_v21_small_256.tflite?download=true" -o app/src/main/assets/midas_v21_small_256.tflite
+          ls -lh app/src/main/assets/midas_v21_small_256.tflite
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
@@ -29,4 +34,4 @@ jobs:
           name: AI-FUSION-3D-Scanner-debug
           path: app/build/outputs/apk/debug/app-debug.apk
 
-# v0.2 scanner pipeline build verification
+# v0.7 compact local depth AI build
