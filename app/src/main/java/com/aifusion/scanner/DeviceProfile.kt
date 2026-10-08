@@ -31,11 +31,17 @@ object SmartDeviceEngine {
             ramMb >= 7000 && cores >= 6 -> ScanMode.PERFORMANCE
             else -> ScanMode.BALANCED
         }
-        val acceleration = if (Build.VERSION.SDK_INT >= 31) "CPU + hardware acceleration ready" else "CPU"
+        val acceleration = if (Build.VERSION.SDK_INT >= 31) "CPU/GPU delegate ready" else "CPU"
         return DeviceProfile(ramMb, cores, abi, soc.ifBlank { "unknown" }, mode, acceleration)
     }
 
     fun summary(profile: DeviceProfile): String =
-        String.format(Locale.US, "%s • %d MB RAM • %d cores • %s",
-            profile.mode.name.replace('_', ' '), profile.totalRamMb, profile.cpuCores, profile.acceleration)
+        String.format(
+            Locale.US,
+            "%s • %d MB RAM • %d cores • %s",
+            profile.mode.name.replace('_', ' '),
+            profile.totalRamMb,
+            profile.cpuCores,
+            profile.acceleration
+        )
 }
