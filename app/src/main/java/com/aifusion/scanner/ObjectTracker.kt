@@ -25,6 +25,9 @@ class ObjectTracker {
     private var patch = FloatArray(0)
     private var patchW = 0
     private var patchH = 0
+    // Cached template moments avoid recalculating them for every search candidate.
+    private var patchSum = 0f
+    private var patchSquaredSum = 0f
     private var centerX = 0.5f
     private var centerY = 0.5f
     private var active = false
@@ -36,6 +39,8 @@ class ObjectTracker {
         patch = FloatArray(0)
         patchW = 0
         patchH = 0
+        patchSum = 0f
+        patchSquaredSum = 0f
         centerX = 0.5f
         centerY = 0.5f
         misses = 0
@@ -55,6 +60,7 @@ class ObjectTracker {
         val y = (ny.coerceIn(0f, 1f) * (bitmap.height - 1)).toInt()
 
         patch = samplePatch(pixels, bitmap.width, bitmap.height, x, y, patchW, patchH)
+        refreshTemplateStats()
         centerX = x / (bitmap.width - 1f)
         centerY = y / (bitmap.height - 1f)
         misses = 0
@@ -161,6 +167,7 @@ class ObjectTracker {
             for (i in patch.indices) {
                 patch[i] = patch[i] * 0.975f + observed[i] * 0.025f
             }
+            refreshTemplateStats()
         }
 
         return ObjectTrackResult(centerX, centerY, bestVisualScore, true, misses)
@@ -196,54 +203,57 @@ class ObjectTracker {
         return out
     }
 
+    /**
+     * One-pass candidate statistics. The old implementation scanned every
+     * candidate twice and recalculated the fixed template statistics each time.
+     * This version keeps the same similarity blend but reduces repeated pixel work.
+     */
+    private fun refreshTemplateStats() {
+        var sum = 0f
+        var squaredSum = 0f
+        for (value in patch) {
+            sum += value
+            squaredSum += value * value
+        }
+        patchSum = sum
+        patchSquaredSum = squaredSum
+    }
+
     private fun match(pixels: FloatArray, imageWidth: Int, cx: Int, cy: Int): Float {
         val left = cx - patchW / 2
         val top = cy - patchH / 2
         val count = patch.size
         if (count == 0) return 0f
 
-        var templateMean = 0f
-        var candidateMean = 0f
-        var i = 0
-        for (y in 0 until patchH) {
-            val row = (top + y) * imageWidth + left
-            for (x in 0 until patchW) {
-                templateMean += patch[i]
-                candidateMean += pixels[row + x]
-                i++
-            }
-        }
-        templateMean /= count
-        candidateMean /= count
-
+        var candidateSum = 0f
+        var candidateSquaredSum = 0f
+        var crossSum = 0f
         var absoluteError = 0f
-        var covariance = 0f
-        var templateVariance = 0f
-        var candidateVariance = 0f
-        i = 0
+        var i = 0
         for (y in 0 until patchH) {
             val row = (top + y) * imageWidth + left
             for (x in 0 until patchW) {
                 val a = patch[i]
                 val b = pixels[row + x]
+                candidateSum += b
+                candidateSquaredSum += b * b
+                crossSum += a * b
                 absoluteError += abs(a - b)
-                val da = a - templateMean
-                val db = b - candidateMean
-                covariance += da * db
-                templateVariance += da * da
-                candidateVariance += db * db
                 i++
             }
         }
 
-        val rawSimilarity = (1f - absoluteError / count).coerceIn(0f, 1f)
+        val n = count.toFloat()
+        val rawSimilarity = (1f - absoluteError / n).coerceIn(0f, 1f)
+        val templateVariance = (patchSquaredSum - patchSum * patchSum / n).coerceAtLeast(0f)
+        val candidateVariance =
+            (candidateSquaredSum - candidateSum * candidateSum / n).coerceAtLeast(0f)
         val varianceProduct = templateVariance * candidateVariance
         if (varianceProduct < 1e-7f) return rawSimilarity
 
+        val covariance = crossSum - patchSum * candidateSum / n
         val correlation = (covariance / sqrt(varianceProduct)).coerceIn(-1f, 1f)
         val correlationSimilarity = (correlation + 1f) * 0.5f
-        // Raw similarity handles simple patches; normalized correlation is
-        // less sensitive to moderate exposure changes on textured objects.
         return (rawSimilarity * 0.58f + correlationSimilarity * 0.42f).coerceIn(0f, 1f)
     }
 
