@@ -18,9 +18,9 @@ import kotlin.math.sqrt
 /**
  * Lightweight interactive relative-depth surface preview.
  *
- * This renders a shaded triangle mesh from the current monocular depth estimate.
- * It is an inspectable relief preview, not metric geometry or a complete object mesh.
- * Mesh density is reduced for low-memory devices.
+ * This renders a denser shaded triangle mesh from the current monocular depth estimate.
+ * It is an inspectable relative-depth relief, not metric geometry or a complete object mesh.
+ * Mesh density and edge-preserving smoothing are tuned for mid-range and low-memory devices.
  */
 class Scan3DPreviewView @JvmOverloads constructor(
     context: Context,
@@ -237,7 +237,8 @@ class Scan3DPreviewView @JvmOverloads constructor(
     }
 
     private fun drawSurfaceMesh(canvas: Canvas, image: Bitmap, w: Float, h: Float) {
-        val divisions = if (lowPower) 12 else 20
+        // Higher mesh density reveals smaller depth changes; low-RAM mode stays conservative.
+        val divisions = if (lowPower) 16 else 32
         val rows = divisions + 1
         val cols = divisions + 1
         val regionW = if (focusLocked) 0.68f else 0.90f
@@ -330,7 +331,8 @@ class Scan3DPreviewView @JvmOverloads constructor(
         val center = value(x, y)
         val neighbors = value(x - 1, y) + value(x + 1, y) +
             value(x, y - 1) + value(x, y + 1)
-        return (center * 0.60f + neighbors * 0.10f).coerceIn(0f, 1f)
+        // Keep most of the center sample so small edges survive smoothing.
+        return (center * 0.80f + neighbors * 0.05f).coerceIn(0f, 1f)
     }
 
     private fun createFace(a: Vertex, b: Vertex, c: Vertex): Face {
