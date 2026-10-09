@@ -24,15 +24,18 @@
             android:layout_marginTop="3dp" android:text="Ready • tap an object to track"
             android:textColor="#D9FFFFFF" android:textSize="12sp" android:maxLines="2" android:ellipsize="end" />
     </LinearLayout>
+    <!-- Keep live 3D model and coverage analysis together on the scanner screen. -->
     <LinearLayout
-        android:layout_width="218dp" android:layout_height="244dp" android:layout_gravity="center"
+        android:layout_width="320dp" android:layout_height="352dp" android:layout_gravity="center"
         android:orientation="vertical" android:elevation="6dp">
         <com.aifusion.scanner.Scan3DPreviewView
-            android:id="@+id/miniPreview" android:layout_width="match_parent" android:layout_height="218dp" />
+            android:id="@+id/miniPreview" android:layout_width="match_parent" android:layout_height="320dp" />
         <TextView
-            android:id="@+id/coverageText" android:layout_width="match_parent" android:layout_height="wrap_content"
-            android:gravity="center" android:padding="3dp" android:text="0% • READY"
-            android:textColor="#FFFFFFFF" android:textSize="11sp" android:textStyle="bold" android:background="#B20B1015" />
+            android:id="@+id/coverageText" android:layout_width="match_parent" android:layout_height="32dp"
+            android:gravity="center" android:paddingStart="6dp" android:paddingEnd="6dp"
+            android:text="0% covered • LIVE ANALYSIS"
+            android:textColor="#FFFFFFFF" android:textSize="11sp" android:textStyle="bold"
+            android:singleLine="true" android:ellipsize="end" android:background="#E60B1018" />
     </LinearLayout>
     <Button
         android:id="@+id/trackingLock" android:layout_width="wrap_content" android:layout_height="wrap_content"
