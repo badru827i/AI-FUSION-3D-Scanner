@@ -25,6 +25,7 @@ class HologramAnalysisOverlayView @JvmOverloads constructor(
     private var active = false
     private var lowPower = false
     private var targetVisible = false
+    private var targetSelected = false
     private var targetX = 0.5f
     private var targetY = 0.5f
     private var targetW = 0.30f
@@ -44,10 +45,20 @@ class HologramAnalysisOverlayView @JvmOverloads constructor(
         invalidate()
     }
 
-    fun updateTarget(x: Float, y: Float, tracked: Boolean) {
+    fun updateTarget(
+        x: Float,
+        y: Float,
+        tracked: Boolean,
+        width: Float = 0.30f,
+        height: Float = 0.30f,
+        locked: Boolean = true
+    ) {
         targetX = x.coerceIn(0f, 1f)
         targetY = y.coerceIn(0f, 1f)
-        targetVisible = tracked
+        targetW = width.coerceIn(0.08f, 0.65f)
+        targetH = height.coerceIn(0.08f, 0.65f)
+        targetSelected = locked
+        targetVisible = tracked && locked
         invalidate()
     }
 
@@ -70,6 +81,7 @@ class HologramAnalysisOverlayView @JvmOverloads constructor(
         animator = null
         phase = 0f
         targetVisible = false
+        targetSelected = false
     }
 
     override fun onDraw(canvas: Canvas) {
@@ -140,7 +152,8 @@ class HologramAnalysisOverlayView @JvmOverloads constructor(
             paint.style = Paint.Style.FILL
             paint.textSize = 11f * resources.displayMetrics.density
             paint.color = 0xCCFFFFFF.toInt()
-            canvas.drawText("ANALYSING • MOVE SLOWLY", left, min(height - 12f, bottom + 20f), paint)
+            val hint = if (targetSelected) "TARGET LOST • REACQUIRING" else "ANALYSING • MOVE SLOWLY"
+            canvas.drawText(hint, left, min(height - 12f, bottom + 20f), paint)
         }
     }
 
