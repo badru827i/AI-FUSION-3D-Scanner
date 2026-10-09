@@ -108,6 +108,7 @@ class MainActivity : ComponentActivity() {
         scanSession = ScanSession(this, profile)
         depthAi = DepthAiEngine(this, profile)
         hologramOverlay.setLowPowerMode(profile.mode == ScanMode.LOW_RAM)
+        miniPreview.setLowPowerMode(profile.mode == ScanMode.LOW_RAM)
 
         deviceStatus.text = "AI-FUSION • " + SmartDeviceEngine.summary(profile) + " • Depth AI " + depthAi.backend
         startButton.setOnClickListener { if (!scanning) startScan() else finishScan() }
