@@ -98,18 +98,19 @@ object MeshGenerator {
      * It intentionally does not fabricate a sphere or claim camera-pose fusion.
      */
     fun fromDepthMap(file: File, maxDimension: Int): Mesh {
-        val width: Int
-        val height: Int
-        val source: ByteArray
-        DataInputStream(file.inputStream().buffered()).use { input ->
-            width = input.readInt()
-            height = input.readInt()
+        val decoded = DataInputStream(file.inputStream().buffered()).use { input ->
+            val width = input.readInt()
+            val height = input.readInt()
             require(width in 2..1024 && height in 2..1024) { "Invalid depth-map dimensions" }
             val count = width.toLong() * height.toLong()
             require(count <= 1_048_576L) { "Depth map is too large" }
-            source = ByteArray(count.toInt())
+            val source = ByteArray(count.toInt())
             input.readFully(source)
+            Triple(width, height, source)
         }
+        val width = decoded.first
+        val height = decoded.second
+        val source = decoded.third
 
         val outWidth = minOf(width, maxDimension.coerceAtLeast(2))
         val outHeight = minOf(height, maxDimension.coerceAtLeast(2))
