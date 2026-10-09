@@ -11,7 +11,9 @@ data class ObjectTrackResult(
     val y: Float,
     val score: Float,
     val tracked: Boolean,
-    val misses: Int = 0
+    val misses: Int = 0,
+    val width: Float = 0.22f,
+    val height: Float = 0.22f
 )
 
 /**
@@ -29,6 +31,9 @@ class ObjectTracker {
     private var centerY = 0.5f
     private var active = false
     private var misses = 0
+    private var velocityX = 0f
+    private var velocityY = 0f
+    private var smoothedScore = 0f
 
     fun isActive(): Boolean = active
 
@@ -39,6 +44,9 @@ class ObjectTracker {
         centerX = 0.5f
         centerY = 0.5f
         misses = 0
+        velocityX = 0f
+        velocityY = 0f
+        smoothedScore = 0f
         active = false
     }
 
@@ -58,6 +66,9 @@ class ObjectTracker {
         centerX = x / (bitmap.width - 1f)
         centerY = y / (bitmap.height - 1f)
         misses = 0
+        velocityX = 0f
+        velocityY = 0f
+        smoothedScore = 1f
         active = patch.isNotEmpty()
     }
 
@@ -71,6 +82,12 @@ class ObjectTracker {
         val pixels = grayscale(bitmap)
         val previousX = (centerX * (width - 1)).toInt()
         val previousY = (centerY * (height - 1)).toInt()
+        // Predict a short distance along the last reliable motion to reduce lag.
+        // Keep the prediction bounded so a bad frame cannot send the lock away.
+        val predictedX = (previousX + velocityX * (width - 1)).toInt()
+            .coerceIn(0, width - 1)
+        val predictedY = (previousY + velocityY * (height - 1)).toInt()
+            .coerceIn(0, height - 1)
         val minX = patchW / 2
         val minY = patchH / 2
         val maxX = width - patchW + patchW / 2
@@ -79,6 +96,8 @@ class ObjectTracker {
         val baseRadius = max(8, min(width, height) / 3)
         val allowedRadius = max(width, height) / 2
         val searchRadius = min(allowedRadius, baseRadius * (1 + misses.coerceAtMost(2)))
+        val searchCenterX = if (misses == 0) predictedX else previousX
+        val searchCenterY = if (misses == 0) predictedY else previousY
         val coarseStep = if (max(width, height) <= 100) 2 else 3
 
         var bestScore = -1f
@@ -86,19 +105,19 @@ class ObjectTracker {
         var bestX = previousX.coerceIn(minX, maxX)
         var bestY = previousY.coerceIn(minY, maxY)
 
-        var y = max(minY, previousY - searchRadius)
-        val endY = min(maxY, previousY + searchRadius)
+        var y = max(minY, searchCenterY - searchRadius)
+        val endY = min(maxY, searchCenterY + searchRadius)
         while (y <= endY) {
-            var x = max(minX, previousX - searchRadius)
-            val endX = min(maxX, previousX + searchRadius)
+            var x = max(minX, searchCenterX - searchRadius)
+            val endX = min(maxX, searchCenterX + searchRadius)
             while (x <= endX) {
                 val visual = match(pixels, width, x, y)
                 val distance = sqrt(
-                    ((x - previousX) * (x - previousX) + (y - previousY) * (y - previousY)).toFloat()
+                    ((x - searchCenterX) * (x - searchCenterX) +
+                        (y - searchCenterY) * (y - searchCenterY)).toFloat()
                 )
-                // Prefer nearby matches slightly; this prevents textureless areas
-                // from jumping between equally dark patches on every frame.
-                val adjusted = (visual - 0.10f * distance / max(1, searchRadius)).coerceIn(0f, 1f)
+                // Penalize distant candidates to reduce jumps to similar background patches.
+                val adjusted = (visual - 0.13f * distance / max(1, searchRadius)).coerceIn(0f, 1f)
                 if (adjusted > bestScore) {
                     bestScore = adjusted
                     bestVisualScore = visual
@@ -122,9 +141,10 @@ class ObjectTracker {
             while (x <= refineEndX) {
                 val visual = match(pixels, width, x, y)
                 val distance = sqrt(
-                    ((x - previousX) * (x - previousX) + (y - previousY) * (y - previousY)).toFloat()
+                    ((x - searchCenterX) * (x - searchCenterX) +
+                        (y - searchCenterY) * (y - searchCenterY)).toFloat()
                 )
-                val adjusted = (visual - 0.10f * distance / max(1, searchRadius)).coerceIn(0f, 1f)
+                val adjusted = (visual - 0.13f * distance / max(1, searchRadius)).coerceIn(0f, 1f)
                 if (adjusted > bestScore) {
                     bestScore = adjusted
                     bestVisualScore = visual
@@ -136,34 +156,47 @@ class ObjectTracker {
             y++
         }
 
-        if (bestVisualScore < 0.60f) {
+        // Require a stronger match for normal tracking; allow a slightly lower
+        // threshold during recovery, but never silently switch targets on a weak match.
+        val wasRecovering = misses > 0
+        val requiredScore = if (wasRecovering) 0.62f else 0.66f
+        if (bestVisualScore < requiredScore) {
             misses++
-            return ObjectTrackResult(centerX, centerY, bestVisualScore, false, misses)
+            velocityX *= 0.55f
+            velocityY *= 0.55f
+            return ObjectTrackResult(
+                centerX, centerY, smoothedScore, false, misses,
+                patchW / (width - 1f), patchH / (height - 1f)
+            )
         }
 
-        val wasRecovering = misses > 0
         misses = 0
         val targetX = bestX / (width - 1f)
         val targetY = bestY / (height - 1f)
-        val gain = when {
-            wasRecovering -> 0.48f
-            bestVisualScore >= 0.84f -> 0.46f
-            else -> 0.30f
-        }
-        centerX = (centerX + (targetX - centerX) * gain).coerceIn(0f, 1f)
-        centerY = (centerY + (targetY - centerY) * gain).coerceIn(0f, 1f)
+        val deltaX = (targetX - centerX).coerceIn(-0.18f, 0.18f)
+        val deltaY = (targetY - centerY).coerceIn(-0.18f, 0.18f)
+        // Smooth the position while maintaining a bounded velocity estimate.
+        centerX = (centerX + deltaX * 0.52f).coerceIn(0f, 1f)
+        centerY = (centerY + deltaY * 0.52f).coerceIn(0f, 1f)
+        velocityX = (velocityX * 0.35f + deltaX * 0.65f).coerceIn(-0.12f, 0.12f)
+        velocityY = (velocityY * 0.35f + deltaY * 0.65f).coerceIn(-0.12f, 0.12f)
+        smoothedScore = smoothedScore * 0.65f + bestVisualScore * 0.35f
 
         val moved = sqrt(
             ((bestX - previousX) * (bestX - previousX) + (bestY - previousY) * (bestY - previousY)).toFloat()
         )
-        if (bestVisualScore >= 0.84f && moved <= searchRadius * 0.45f) {
+        // Adapt only from strong, nearby matches to avoid contaminating the template.
+        if (bestVisualScore >= 0.86f && moved <= searchRadius * 0.30f) {
             val observed = samplePatch(pixels, width, height, bestX, bestY, patchW, patchH)
             for (i in patch.indices) {
-                patch[i] = patch[i] * 0.975f + observed[i] * 0.025f
+                patch[i] = patch[i] * 0.99f + observed[i] * 0.01f
             }
         }
 
-        return ObjectTrackResult(centerX, centerY, bestVisualScore, true, misses)
+        return ObjectTrackResult(
+            centerX, centerY, smoothedScore, true, misses,
+            patchW / (width - 1f), patchH / (height - 1f)
+        )
     }
 
     private fun grayscale(bitmap: Bitmap): FloatArray {
