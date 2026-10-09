@@ -652,8 +652,14 @@ class MainActivity : ComponentActivity() {
         previewHandler.removeCallbacksAndMessages(null)
         exportExecutor.shutdownNow()
         aiExecutor.shutdownNow()
-        depthExecutor.shutdownNow()
-        depthAi.close()
+        // Close the model only after any in-flight depth inference has left the executor.
+        try {
+            depthExecutor.execute { depthAi.close() }
+            depthExecutor.shutdown()
+        } catch (_: Throwable) {
+            depthExecutor.shutdownNow()
+            depthAi.close()
+        }
         miniPreview.clear()
         super.onDestroy()
     }
