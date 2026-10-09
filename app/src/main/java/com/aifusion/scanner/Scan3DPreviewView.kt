@@ -29,11 +29,13 @@ class Scan3DPreviewView @JvmOverloads constructor(
     private var focusY = 0.5f
     private var focusLocked = false
     private var trackingFound = true
+    private var live = true
 
     fun setPreview(value: Bitmap, scanCoverage: ScanCoverage) {
         replaceBitmap(value)
         coverage = scanCoverage
         aiDepth = false
+        live = false
         focusLocked = false
         trackingFound = true
         rotation = (rotation + 0.08f) % 6.28318f
@@ -52,6 +54,7 @@ class Scan3DPreviewView @JvmOverloads constructor(
         replaceBitmap(value)
         coverage = scanCoverage
         aiDepth = true
+        live = true
         focusX = targetX.coerceIn(0f, 1f)
         focusY = targetY.coerceIn(0f, 1f)
         focusLocked = targetLocked
@@ -69,6 +72,13 @@ class Scan3DPreviewView @JvmOverloads constructor(
         if (previous != null && previous !== value && !previous.isRecycled) previous.recycle()
     }
 
+    fun setCompleted() {
+        live = false
+        focusLocked = false
+        trackingFound = true
+        invalidate()
+    }
+
     fun clear() {
         val previous = bitmap
         bitmap = null
@@ -76,6 +86,7 @@ class Scan3DPreviewView @JvmOverloads constructor(
         coverage = null
         rotation = 0f
         aiDepth = false
+        live = false
         focusLocked = false
         trackingFound = true
         visibility = View.GONE
@@ -154,8 +165,8 @@ class Scan3DPreviewView @JvmOverloads constructor(
             val p = projected[y][x]
             if (x + 1 < cols) {
                 val q = projected[y][x + 1]
-                val depthTone = ((p[3] + q[3]) * 0.5f * 80f).toInt().coerceIn(0, 80)
-                paint.color = (0xB26FE7FF.toInt() and 0x00FFFFFF) or (0xB2 shl 24)
+                val depthTone = (((p[3] + q[3]) * 0.5f * 80f).toInt()).coerceIn(0, 80)
+                paint.color = ((155 + depthTone) shl 24) or 0x006FE7FF
                 canvas.drawLine(p[0], p[1], q[0], q[1], paint)
             }
             if (y + 1 < rows) {
@@ -170,6 +181,7 @@ class Scan3DPreviewView @JvmOverloads constructor(
         paint.textSize = 11f
         val title = when {
             !aiDepth -> "3D PREVIEW"
+            !live -> "3D RESULT • RELATIVE DEPTH"
             focusLocked && trackingFound -> "LIVE 3D • TRACK LOCKED"
             focusLocked -> "LIVE 3D • RECOVERING"
             else -> "LIVE 3D • AI DEPTH"
