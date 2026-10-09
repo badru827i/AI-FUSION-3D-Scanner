@@ -103,12 +103,14 @@ class ObjectTracker {
         // Expand the local search when gyro/accelerometer reports a camera turn.
         // This improves reacquisition without paying for a full-frame search each frame.
         val motionExpansion = when {
-            cameraMotion > 5f -> 0.22f
-            cameraMotion > 2f -> 0.12f
+            cameraMotion > 5f -> 0.15f
+            cameraMotion > 2f -> 0.08f
             else -> 0f
         }
-        val baseRadius = max(8, (min(width, height) * (1f / 3f + motionExpansion)).toInt())
-        val allowedRadius = (max(width, height) * 0.70f).toInt()
+        // Keep the normal search local. A very wide search often locks onto
+        // a similar background texture and makes the overlay jump.
+        val baseRadius = max(8, (min(width, height) * (0.12f + motionExpansion)).toInt())
+        val allowedRadius = (max(width, height) * 0.48f).toInt()
         val searchRadius = min(allowedRadius, baseRadius * (1 + misses.coerceAtMost(2)))
         val searchCenterX = if (misses == 0) predictedX else previousX
         val searchCenterY = if (misses == 0) predictedY else previousY
@@ -131,7 +133,7 @@ class ObjectTracker {
                         (y - searchCenterY) * (y - searchCenterY)).toFloat()
                 )
                 // Penalize distant candidates to reduce jumps to similar background patches.
-                val adjusted = (visual - 0.13f * distance / max(1, searchRadius)).coerceIn(0f, 1f)
+                val adjusted = (visual - 0.22f * distance / max(1, searchRadius)).coerceIn(0f, 1f)
                 if (adjusted > bestScore) {
                     bestScore = adjusted
                     bestVisualScore = visual
@@ -158,7 +160,7 @@ class ObjectTracker {
                     ((x - searchCenterX) * (x - searchCenterX) +
                         (y - searchCenterY) * (y - searchCenterY)).toFloat()
                 )
-                val adjusted = (visual - 0.13f * distance / max(1, searchRadius)).coerceIn(0f, 1f)
+                val adjusted = (visual - 0.22f * distance / max(1, searchRadius)).coerceIn(0f, 1f)
                 if (adjusted > bestScore) {
                     bestScore = adjusted
                     bestVisualScore = visual
@@ -173,8 +175,17 @@ class ObjectTracker {
         // Require a stronger match for normal tracking; allow a slightly lower
         // threshold during recovery, but never silently switch targets on a weak match.
         val wasRecovering = misses > 0
-        val requiredScore = if (wasRecovering) 0.62f else 0.66f
-        if (bestVisualScore < requiredScore) {
+        val requiredScore = if (wasRecovering) 0.66f else 0.69f
+        val displacementPx = sqrt(
+            ((bestX - previousX) * (bestX - previousX) +
+                (bestY - previousY) * (bestY - previousY)).toFloat()
+        )
+        val frameDiagonal = sqrt((width * width + height * height).toFloat()).coerceAtLeast(1f)
+        val normalizedDisplacement = displacementPx / frameDiagonal
+        val allowedJump = if (cameraMotion > 2f) 0.24f else 0.14f
+        // Reject a weak match that suddenly teleports to another part of the scene.
+        val suspiciousJump = normalizedDisplacement > allowedJump && bestVisualScore < 0.86f
+        if (bestVisualScore < requiredScore || suspiciousJump) {
             misses++
             velocityX *= 0.55f
             velocityY *= 0.55f
@@ -187,22 +198,26 @@ class ObjectTracker {
         misses = 0
         val targetX = bestX / (width - 1f)
         val targetY = bestY / (height - 1f)
-        val deltaX = (targetX - centerX).coerceIn(-0.24f, 0.24f)
-        val deltaY = (targetY - centerY).coerceIn(-0.24f, 0.24f)
-        // Follow faster-moving targets more responsively while keeping low-motion
-        // frames stable against jitter.
-        val follow = if (abs(deltaX) + abs(deltaY) > 0.035f) 0.62f else 0.44f
+        val deltaX = (targetX - centerX).coerceIn(-0.18f, 0.18f)
+        val deltaY = (targetY - centerY).coerceIn(-0.18f, 0.18f)
+        val deltaMagnitude = sqrt(deltaX * deltaX + deltaY * deltaY)
+        // Confidence-aware smoothing damps small jitter but still follows a real move.
+        val follow = when {
+            bestVisualScore >= 0.88f -> if (deltaMagnitude > 0.035f) 0.40f else 0.22f
+            bestVisualScore >= 0.78f -> 0.29f
+            else -> 0.21f
+        }
         centerX = (centerX + deltaX * follow).coerceIn(0f, 1f)
         centerY = (centerY + deltaY * follow).coerceIn(0f, 1f)
-        velocityX = (velocityX * 0.35f + deltaX * 0.65f).coerceIn(-0.12f, 0.12f)
-        velocityY = (velocityY * 0.35f + deltaY * 0.65f).coerceIn(-0.12f, 0.12f)
+        velocityX = (velocityX * 0.70f + deltaX * 0.30f).coerceIn(-0.08f, 0.08f)
+        velocityY = (velocityY * 0.70f + deltaY * 0.30f).coerceIn(-0.08f, 0.08f)
         smoothedScore = if (smoothedScore <= 0f) bestVisualScore else smoothedScore * 0.65f + bestVisualScore * 0.35f
 
         val moved = sqrt(
             ((bestX - previousX) * (bestX - previousX) + (bestY - previousY) * (bestY - previousY)).toFloat()
         )
         // Adapt only from strong, nearby matches to avoid contaminating the template.
-        if (bestVisualScore >= 0.86f && moved <= searchRadius * 0.30f) {
+        if (bestVisualScore >= 0.90f && moved <= max(4f, searchRadius * 0.12f)) {
             val observed = samplePatch(pixels, width, height, bestX, bestY, patchW, patchH)
             for (i in patch.indices) {
                 patch[i] = patch[i] * 0.99f + observed[i] * 0.01f
