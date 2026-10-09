@@ -15,6 +15,7 @@ import android.widget.Button
 import android.widget.TextView
 import android.widget.Toast
 import android.util.Size
+import android.view.View
 import androidx.activity.ComponentActivity
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
@@ -74,6 +75,7 @@ class MainActivity : ComponentActivity() {
         scanStatus = findViewById(R.id.scanStatus)
         startButton = findViewById(R.id.startScan)
         miniPreview = findViewById(R.id.miniPreview)
+        miniPreview.visibility = View.GONE
         trackingOverlay = findViewById(R.id.trackingOverlay)
         trackingOverlay.onTargetSelected = { x, y ->
             pendingTargetX = x
@@ -288,6 +290,7 @@ class MainActivity : ComponentActivity() {
             runOnUiThread { if (scanning) scanStatus.text = "Object locked • tracking + AI depth" }
         }
         val track = objectTracker.update(bitmap)
+        val objectLockActive = objectTracker.isActive()
         runOnUiThread {
             if (scanning && track.tracked) {
                 trackingOverlay.setTarget(track.x, track.y, active = true)
@@ -325,7 +328,7 @@ class MainActivity : ComponentActivity() {
             runOnUiThread {
                 if (scanning) {
                     coverage.update(snapshot)
-                    miniPreview.setDepthPreview(depthBitmap, coverage)
+                    miniPreview.setDepthPreview(depthBitmap, coverage, track.x, track.y, objectLockActive, track.tracked)
                     coverageText.text = coverage.percent().toString() + "% covered • AI depth • " + result.inferenceMs + "ms"
                     scanStatus.text = "AI Depth " + result.backend + " • " + result.inferenceMs + "ms • DEPTH PREVIEW"
                 } else {
