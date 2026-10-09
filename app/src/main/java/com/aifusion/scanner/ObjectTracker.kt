@@ -59,8 +59,10 @@ class ObjectTracker {
             return
         }
 
-        patchW = min(24, max(6, bitmap.width / 7)).coerceAtMost(bitmap.width - 1)
-        patchH = min(24, max(6, bitmap.height / 7)).coerceAtMost(bitmap.height - 1)
+        // Use a larger appearance anchor than a tiny point so the lock is less likely
+        // to jump to a similar background texture. Keep it bounded for entry-level phones.
+        patchW = min(32, max(8, bitmap.width / 6)).coerceAtMost(bitmap.width - 1)
+        patchH = min(32, max(8, bitmap.height / 6)).coerceAtMost(bitmap.height - 1)
         val pixels = grayscale(bitmap)
         val x = (nx.coerceIn(0f, 1f) * (bitmap.width - 1)).toInt()
         val y = (ny.coerceIn(0f, 1f) * (bitmap.height - 1)).toInt()
