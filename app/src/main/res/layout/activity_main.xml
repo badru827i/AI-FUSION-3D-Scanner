@@ -22,15 +22,18 @@
             android:textColor="#D9FFFFFF" android:textSize="12sp" android:maxLines="2" android:ellipsize="end" />
     </LinearLayout>
     <LinearLayout
-        android:layout_width="142dp" android:layout_height="170dp" android:layout_gravity="top|end"
-        android:layout_marginTop="78dp" android:layout_marginEnd="10dp" android:orientation="vertical">
+        android:layout_width="218dp" android:layout_height="244dp" android:layout_gravity="center"
+        android:orientation="vertical" android:elevation="6dp">
         <com.aifusion.scanner.Scan3DPreviewView
-            android:id="@+id/miniPreview" android:layout_width="match_parent" android:layout_height="142dp" />
+            android:id="@+id/miniPreview" android:layout_width="match_parent" android:layout_height="218dp" />
         <TextView
             android:id="@+id/coverageText" android:layout_width="match_parent" android:layout_height="wrap_content"
             android:gravity="center" android:padding="3dp" android:text="0% • READY"
-            android:textColor="#FFFFFFFF" android:textSize="11sp" android:textStyle="bold" android:background="#CC0B1015" />
+            android:textColor="#FFFFFFFF" android:textSize="11sp" android:textStyle="bold" android:background="#B20B1015" />
     </LinearLayout>
+    <Button
+        android:id="@+id/trackingLock" android:layout_width="wrap_content" android:layout_height="wrap_content"
+        android:layout_gravity="bottom|center_horizontal" android:layout_marginBottom="84dp" android:text="Lock Target" />
     <Button
         android:id="@+id/startScan" android:layout_width="wrap_content" android:layout_height="wrap_content"
         android:layout_gravity="bottom|center_horizontal" android:layout_marginBottom="30dp" android:text="Start 3D Scan" />

@@ -15,6 +15,7 @@ import android.widget.Button
 import android.widget.TextView
 import android.widget.Toast
 import android.util.Size
+import android.view.View
 import androidx.activity.ComponentActivity
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
@@ -36,6 +37,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var deviceStatus: TextView
     private lateinit var scanStatus: TextView
     private lateinit var startButton: Button
+    private lateinit var trackingLockButton: Button
     private lateinit var miniPreview: Scan3DPreviewView
     private lateinit var trackingOverlay: TrackingOverlayView
     private val objectTracker = ObjectTracker()
@@ -73,7 +75,21 @@ class MainActivity : ComponentActivity() {
         deviceStatus = findViewById(R.id.deviceStatus)
         scanStatus = findViewById(R.id.scanStatus)
         startButton = findViewById(R.id.startScan)
+        trackingLockButton = findViewById(R.id.trackingLock)
+        trackingLockButton.setOnClickListener {
+            if (objectTracker.isActive()) {
+                objectTracker.clear()
+                pendingTargetX = null
+                pendingTargetY = null
+                trackingOverlay.clearTarget()
+                trackingLockButton.text = "Lock Target"
+                scanStatus.text = "Tracking unlocked • tap object to lock again"
+            } else {
+                scanStatus.text = if (scanning) "Tap an object in the preview to lock tracking" else "Start scan, then tap an object to lock tracking"
+            }
+        }
         miniPreview = findViewById(R.id.miniPreview)
+        miniPreview.visibility = View.GONE
         trackingOverlay = findViewById(R.id.trackingOverlay)
         trackingOverlay.onTargetSelected = { x, y ->
             pendingTargetX = x
@@ -81,6 +97,7 @@ class MainActivity : ComponentActivity() {
             scanStatus.text = if (scanning) "Target selected • locking object…" else "Target selected • press Start 3D Scan"
         }
         coverageText = findViewById(R.id.coverageText)
+        coverageText.visibility = View.GONE
 
         profile = SmartDeviceEngine.detect(this)
         tracker = CameraTracking(this, profile)
@@ -148,9 +165,11 @@ class MainActivity : ComponentActivity() {
         }
         coverage.reset()
         miniPreview.clear()
+        coverageText.visibility = View.GONE
         tracker.start()
         objectTracker.clear()
         trackingOverlay.clearTarget()
+        trackingLockButton.text = "Lock Target"
         temporalDepth.reset()
         startButton.isEnabled = true
         startButton.text = "Stop 3D Scan"
@@ -285,9 +304,18 @@ class MainActivity : ComponentActivity() {
             objectTracker.lock(bitmap, requestX, requestY)
             pendingTargetX = null
             pendingTargetY = null
-            runOnUiThread { if (scanning) scanStatus.text = "Object locked • tracking + AI depth" }
+            runOnUiThread {
+                if (scanning && objectTracker.isActive()) {
+                    trackingLockButton.text = "Unlock Target"
+                    scanStatus.text = "Object locked • stable tracking + AI depth"
+                } else if (scanning) {
+                    trackingLockButton.text = "Lock Target"
+                    scanStatus.text = "Target not lockable • tap a clearer feature"
+                }
+            }
         }
         val track = objectTracker.update(bitmap)
+        val objectLockActive = objectTracker.isActive()
         runOnUiThread {
             if (scanning && track.tracked) {
                 trackingOverlay.setTarget(track.x, track.y, active = true)
@@ -325,7 +353,8 @@ class MainActivity : ComponentActivity() {
             runOnUiThread {
                 if (scanning) {
                     coverage.update(snapshot)
-                    miniPreview.setDepthPreview(depthBitmap, coverage)
+                    miniPreview.setDepthPreview(depthBitmap, coverage, track.x, track.y, objectLockActive, track.tracked)
+                    coverageText.visibility = View.VISIBLE
                     coverageText.text = coverage.percent().toString() + "% covered • AI depth • " + result.inferenceMs + "ms"
                     scanStatus.text = "AI Depth " + result.backend + " • " + result.inferenceMs + "ms • DEPTH PREVIEW"
                 } else {
@@ -405,6 +434,7 @@ class MainActivity : ComponentActivity() {
     private fun finishScan() {
         if (reconstructing) return
         scanning = false
+        trackingLockButton.text = "Lock Target"
         if (captureInFlight) {
             finishRequested = true
             tracker.stop()
@@ -425,6 +455,8 @@ class MainActivity : ComponentActivity() {
         temporalDepth.reset()
         objectTracker.clear()
         trackingOverlay.clearTarget()
+        trackingLockButton.text = "Lock Target"
+        miniPreview.setCompleted()
         finishRequested = false
 
         if (frameCount <= 0) {
