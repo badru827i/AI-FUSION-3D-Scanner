@@ -5,6 +5,7 @@ import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.ImageFormat
+import android.graphics.Matrix
 import android.graphics.Rect
 import android.graphics.YuvImage
 import android.os.Bundle
@@ -305,7 +306,9 @@ class MainActivity : ComponentActivity() {
         val requestX = pendingTargetX
         val requestY = pendingTargetY
         if (requestX != null && requestY != null) {
-            objectTracker.lock(bitmap, requestX, requestY)
+            // PreviewView uses FILL_CENTER, so undo its centre crop before locking a pixel patch.
+            val framePoint = viewToFramePoint(requestX, requestY, bitmap)
+            objectTracker.lock(bitmap, framePoint.first, framePoint.second)
             pendingTargetX = null
             pendingTargetY = null
             runOnUiThread {
@@ -318,23 +321,29 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
-        val track = objectTracker.update(bitmap)
+        // Read motion before tracking so the search window can react to this frame's camera movement.
+        val snapshot = tracker.snapshot()
+        val track = objectTracker.update(bitmap, snapshot.motion)
         val objectLockActive = objectTracker.isActive()
-        runOnUiThread { if (scanning) hologramOverlay.updateTarget(track.x, track.y, track.tracked) }
+        val displayTarget = frameToViewTarget(track.x, track.y, track.width, track.height, bitmap)
+        runOnUiThread {
+            if (scanning) hologramOverlay.updateTarget(
+                displayTarget.x, displayTarget.y, track.tracked,
+                displayTarget.width, displayTarget.height, objectLockActive
+            )
+        }
         runOnUiThread {
             if (scanning && track.tracked) {
                 trackingOverlay.setTarget(
-                    track.x, track.y,
-                    width = track.width.coerceIn(0.10f, 0.65f),
-                    height = track.height.coerceIn(0.10f, 0.65f),
+                    displayTarget.x, displayTarget.y,
+                    width = displayTarget.width.coerceIn(0.08f, 0.65f),
+                    height = displayTarget.height.coerceIn(0.08f, 0.65f),
                     active = true
                 )
             } else if (scanning && objectTracker.isActive()) {
                 trackingOverlay.setTracking(false)
             }
         }
-
-        val snapshot = tracker.snapshot()
         if (snapshot.quality == "TOO_FAST") {
             bitmap.recycle()
             runOnUiThread {
@@ -398,6 +407,66 @@ class MainActivity : ComponentActivity() {
         return bitmap
     }
 
+    private data class DisplayTarget(
+        val x: Float,
+        val y: Float,
+        val width: Float,
+        val height: Float
+    )
+
+    /**
+     * Translate touch coordinates from the PreviewView's FILL_CENTER viewport
+     * into the rotated ImageAnalysis bitmap coordinates.
+     */
+    private fun viewToFramePoint(x: Float, y: Float, bitmap: Bitmap): Pair<Float, Float> {
+        val viewWidth = trackingOverlay.width.toFloat().coerceAtLeast(1f)
+        val viewHeight = trackingOverlay.height.toFloat().coerceAtLeast(1f)
+        val viewAspect = viewWidth / viewHeight
+        val imageAspect = bitmap.width.toFloat() / bitmap.height.toFloat()
+        return if (imageAspect > viewAspect) {
+            val visible = (viewAspect / imageAspect).coerceIn(0.01f, 1f)
+            val offset = (1f - visible) * 0.5f
+            ((offset + x.coerceIn(0f, 1f) * visible).coerceIn(0f, 1f)) to y.coerceIn(0f, 1f)
+        } else {
+            val visible = (imageAspect / viewAspect).coerceIn(0.01f, 1f)
+            val offset = (1f - visible) * 0.5f
+            x.coerceIn(0f, 1f) to (offset + y.coerceIn(0f, 1f) * visible).coerceIn(0f, 1f)
+        }
+    }
+
+    /** Translate the track box back into screen coordinates for the live overlays. */
+    private fun frameToViewTarget(
+        x: Float,
+        y: Float,
+        width: Float,
+        height: Float,
+        bitmap: Bitmap
+    ): DisplayTarget {
+        val viewWidth = trackingOverlay.width.toFloat().coerceAtLeast(1f)
+        val viewHeight = trackingOverlay.height.toFloat().coerceAtLeast(1f)
+        val viewAspect = viewWidth / viewHeight
+        val imageAspect = bitmap.width.toFloat() / bitmap.height.toFloat()
+        return if (imageAspect > viewAspect) {
+            val visible = (viewAspect / imageAspect).coerceIn(0.01f, 1f)
+            val offset = (1f - visible) * 0.5f
+            DisplayTarget(
+                ((x - offset) / visible).coerceIn(0f, 1f),
+                y.coerceIn(0f, 1f),
+                width / visible,
+                height
+            )
+        } else {
+            val visible = (imageAspect / viewAspect).coerceIn(0.01f, 1f)
+            val offset = (1f - visible) * 0.5f
+            DisplayTarget(
+                x.coerceIn(0f, 1f),
+                ((y - offset) / visible).coerceIn(0f, 1f),
+                width,
+                height / visible
+            )
+        }
+    }
+
     private fun imageToBitmap(image: ImageProxy): Bitmap? {
         if (image.format != ImageFormat.YUV_420_888) return null
         val width = image.width
@@ -446,7 +515,15 @@ class MainActivity : ComponentActivity() {
         val opts = BitmapFactory.Options().apply {
             inSampleSize = if (profile.mode == ScanMode.LOW_RAM) 16 else 8
         }
-        return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)
+        val decoded = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts) ?: return null
+        val rotation = image.imageInfo.rotationDegrees
+        if (rotation == 0) return decoded
+        val matrix = Matrix().apply { postRotate(rotation.toFloat()) }
+        val rotated = Bitmap.createBitmap(
+            decoded, 0, 0, decoded.width, decoded.height, matrix, true
+        )
+        if (rotated !== decoded && !decoded.isRecycled) decoded.recycle()
+        return rotated
     }
 
     private fun finishScan() {
