@@ -27,6 +27,8 @@ class ObjectTracker {
     private var patch = FloatArray(0)
     private var patchW = 0
     private var patchH = 0
+    // Compact 3x3 spatial appearance descriptor helps distinguish similar gray patches.
+    private var patchGrid = FloatArray(9)
     private var centerX = 0.5f
     private var centerY = 0.5f
     private var active = false
@@ -41,6 +43,7 @@ class ObjectTracker {
         patch = FloatArray(0)
         patchW = 0
         patchH = 0
+        patchGrid = FloatArray(9)
         centerX = 0.5f
         centerY = 0.5f
         misses = 0
@@ -63,6 +66,7 @@ class ObjectTracker {
         val y = (ny.coerceIn(0f, 1f) * (bitmap.height - 1)).toInt()
 
         patch = samplePatch(pixels, bitmap.width, bitmap.height, x, y, patchW, patchH)
+        patchGrid = normalizedGrid(patch, patchW, patchH)
         centerX = x / (bitmap.width - 1f)
         centerY = y / (bitmap.height - 1f)
         misses = 0
@@ -191,6 +195,7 @@ class ObjectTracker {
             for (i in patch.indices) {
                 patch[i] = patch[i] * 0.99f + observed[i] * 0.01f
             }
+            patchGrid = normalizedGrid(patch, patchW, patchH)
         }
 
         return ObjectTrackResult(
@@ -253,6 +258,8 @@ class ObjectTracker {
         var covariance = 0f
         var templateVariance = 0f
         var candidateVariance = 0f
+        val gridSums = FloatArray(9)
+        val gridCounts = IntArray(9)
         i = 0
         for (y in 0 until patchH) {
             val row = (top + y) * imageWidth + left
@@ -265,19 +272,73 @@ class ObjectTracker {
                 covariance += da * db
                 templateVariance += da * da
                 candidateVariance += db * db
+                val cell = (y * 3 / patchH).coerceAtMost(2) * 3 +
+                    (x * 3 / patchW).coerceAtMost(2)
+                gridSums[cell] += b
+                gridCounts[cell]++
                 i++
             }
         }
 
         val rawSimilarity = (1f - absoluteError / count).coerceIn(0f, 1f)
         val varianceProduct = templateVariance * candidateVariance
-        if (varianceProduct < 1e-7f) return rawSimilarity
+        val correlationSimilarity = if (varianceProduct < 1e-7f) {
+            rawSimilarity
+        } else {
+            val correlation = (covariance / sqrt(varianceProduct)).coerceIn(-1f, 1f)
+            (correlation + 1f) * 0.5f
+        }
 
-        val correlation = (covariance / sqrt(varianceProduct)).coerceIn(-1f, 1f)
-        val correlationSimilarity = (correlation + 1f) * 0.5f
-        // Raw similarity handles simple patches; normalized correlation is
-        // less sensitive to moderate exposure changes on textured objects.
-        return (rawSimilarity * 0.58f + correlationSimilarity * 0.42f).coerceIn(0f, 1f)
+        // Compare the normalized brightness layout across nine cells. This is
+        // tolerant of overall exposure changes but rejects many look-alike patches.
+        val candidateGrid = FloatArray(9) { index ->
+            gridSums[index] / max(1, gridCounts[index])
+        }
+        val candidateGridMean = candidateGrid.average().toFloat()
+        var gridVariance = 0f
+        for (value in candidateGrid) {
+            val delta = value - candidateGridMean
+            gridVariance += delta * delta
+        }
+        val gridScale = sqrt(gridVariance / 9f).coerceAtLeast(0.035f)
+        var gridError = 0f
+        for (index in candidateGrid.indices) {
+            val normalized = ((candidateGrid[index] - candidateGridMean) / gridScale).coerceIn(-3f, 3f)
+            gridError += abs(normalized - patchGrid[index]).coerceAtMost(6f)
+        }
+        val gridSimilarity = (1f - gridError / (9f * 4f)).coerceIn(0f, 1f)
+
+        // Keep pixel similarity as the main signal; spatial layout adds a
+        // lightweight second cue without relying on a remote model or NPU.
+        return (rawSimilarity * 0.50f +
+            correlationSimilarity * 0.35f +
+            gridSimilarity * 0.15f).coerceIn(0f, 1f)
+    }
+
+    private fun normalizedGrid(values: FloatArray, width: Int, height: Int): FloatArray {
+        if (values.isEmpty() || width <= 0 || height <= 0) return FloatArray(9)
+        val sums = FloatArray(9)
+        val counts = IntArray(9)
+        var index = 0
+        for (y in 0 until height) {
+            for (x in 0 until width) {
+                val cell = (y * 3 / height).coerceAtMost(2) * 3 +
+                    (x * 3 / width).coerceAtMost(2)
+                sums[cell] += values[index++]
+                counts[cell]++
+            }
+        }
+        val means = FloatArray(9) { cell -> sums[cell] / max(1, counts[cell]) }
+        val mean = means.average().toFloat()
+        var variance = 0f
+        for (value in means) {
+            val delta = value - mean
+            variance += delta * delta
+        }
+        val scale = sqrt(variance / 9f).coerceAtLeast(0.035f)
+        return FloatArray(9) { cell ->
+            ((means[cell] - mean) / scale).coerceIn(-3f, 3f)
+        }
     }
 
     private fun gray(pixel: Int): Float =
