@@ -8,11 +8,13 @@ import android.graphics.ImageFormat
 import android.graphics.Rect
 import android.graphics.YuvImage
 import android.os.Bundle
+import android.os.SystemClock
 import android.os.Handler
 import android.os.Looper
 import android.widget.Button
 import android.widget.TextView
 import android.widget.Toast
+import android.util.Size
 import androidx.activity.ComponentActivity
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
@@ -53,6 +55,16 @@ class MainActivity : ComponentActivity() {
     private val temporalDepth = TemporalDepthFilter()
     private var scanning = false
     private var frameCount = 0
+    @Volatile private var captureInFlight = false
+    private var finishRequested = false
+    private var consecutiveCaptureErrors = 0
+    private var reconstructing = false
+    private val exportExecutor: ExecutorService = Executors.newSingleThreadExecutor()
+    private val depthLock = Any()
+    private var latestDepthData: FloatArray? = null
+    private var latestDepthWidth = 0
+    private var latestDepthHeight = 0
+    private var latestDepthElapsedMs = 0L
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -102,6 +114,7 @@ class MainActivity : ComponentActivity() {
                 .setJpegQuality(if (profile.mode == ScanMode.LOW_RAM) 65 else 85)
                 .build()
             imageAnalysis = ImageAnalysis.Builder()
+                .setTargetResolution(if (profile.mode == ScanMode.LOW_RAM) Size(480, 360) else Size(640, 480))
                 .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                 .setImageQueueDepth(1)
                 .build()
@@ -115,16 +128,31 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun startScan() {
+        if (reconstructing || captureInFlight) return
+        try {
+            scanSession.start()
+        } catch (t: Throwable) {
+            scanStatus.text = "Cannot start scan: " + (t.message ?: "storage unavailable")
+            return
+        }
         scanning = true
+        finishRequested = false
         frameCount = 0
         lastPreviewMs = 0L
+        consecutiveCaptureErrors = 0
+        synchronized(depthLock) {
+            latestDepthData = null
+            latestDepthWidth = 0
+            latestDepthHeight = 0
+            latestDepthElapsedMs = 0L
+        }
         coverage.reset()
         miniPreview.clear()
         tracker.start()
         objectTracker.clear()
         trackingOverlay.clearTarget()
         temporalDepth.reset()
-        scanSession.start()
+        startButton.isEnabled = true
         startButton.text = "Stop 3D Scan"
         coverageText.text = "0% covered • LIVE"
         scanStatus.text = "AI Depth " + depthAi.backend + " • tap object to lock • frames: 0"
@@ -132,32 +160,107 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun captureFrame() {
-        if (!scanning) return
+        if (!scanning || captureInFlight) return
+        captureInFlight = true
         val file = File(scanSession.framesDir, "frame_%04d.jpg".format(frameCount))
         val options = ImageCapture.OutputFileOptions.Builder(file).build()
-        imageCapture.takePicture(options, ContextCompat.getMainExecutor(this),
-            object : ImageCapture.OnImageSavedCallback {
-                override fun onImageSaved(output: ImageCapture.OutputFileResults) {
-                    val snapshot = tracker.snapshot()
-                    if (snapshot.quality == "TOO_FAST") {
-                        file.delete()
-                        scanStatus.text = "Move slower • frame skipped • tracking"
-                    } else {
-                        frameCount++
-                        scanSession.recordFrame(file)
-                        scanSession.recordTracking(frameCount, snapshot)
-                        coverage.update(snapshot)
-                        coverageText.text = coverage.percent().toString() + "% covered"
-                        scanStatus.text = "AI Depth " + depthAi.backend + " • LIVE • " + coverage.guidance() + " • frames: " + frameCount
+        try {
+            imageCapture.takePicture(options, ContextCompat.getMainExecutor(this),
+                object : ImageCapture.OnImageSavedCallback {
+                    override fun onImageSaved(output: ImageCapture.OutputFileResults) {
+                        captureInFlight = false
+                        consecutiveCaptureErrors = 0
+                        if (finishRequested) {
+                            if (file.exists()) recordCapturedFrame(file)
+                            finishRequested = false
+                            finalizeScan()
+                            return
+                        }
+                        if (!scanning) {
+                            file.delete()
+                            return
+                        }
+                        recordCapturedFrame(file)
+                        if (scanning) {
+                            val delay = if (profile.mode == ScanMode.LOW_RAM) 1200L else 850L
+                            previewHandler.postDelayed({ captureFrame() }, delay)
+                        }
                     }
-                    if (scanning) previewHandler.postDelayed({ captureFrame() }, if (profile.mode == ScanMode.LOW_RAM) 900L else 550L)
-                }
 
-                override fun onError(exception: ImageCaptureException) {
-                    scanStatus.text = "Capture error: " + (exception.message ?: "unknown")
-                    if (scanning) previewHandler.postDelayed({ captureFrame() }, 1000L)
-                }
-            })
+                    override fun onError(exception: ImageCaptureException) {
+                        captureInFlight = false
+                        file.delete()
+                        handleCaptureFailure(exception.message ?: "camera capture failed")
+                    }
+                })
+        } catch (t: Throwable) {
+            captureInFlight = false
+            file.delete()
+            handleCaptureFailure(t.message ?: "camera capture failed")
+        }
+    }
+
+    private fun recordCapturedFrame(file: File) {
+        if (!file.exists() || file.length() == 0L) {
+            scanStatus.text = "Empty camera frame skipped"
+            return
+        }
+        val snapshot = tracker.snapshot()
+        if (snapshot.quality == "TOO_FAST") {
+            file.delete()
+            scanStatus.text = "Move slower • frame skipped • tracking"
+            return
+        }
+
+        val frameIndex = frameCount
+        scanSession.recordFrame(file)
+        scanSession.recordTracking(frameIndex, snapshot)
+        val depthSnapshot = synchronized(depthLock) {
+            val data = latestDepthData
+            if (data != null && latestDepthElapsedMs > 0L &&
+                SystemClock.elapsedRealtime() - latestDepthElapsedMs <= 4000L) {
+                Triple(data.copyOf(), latestDepthWidth, latestDepthHeight)
+            } else null
+        }
+        var depthSaved = false
+        var depthSaveError: String? = null
+        if (depthSnapshot != null) {
+            try {
+                scanSession.recordDepthMap(frameIndex, depthSnapshot.first, depthSnapshot.second, depthSnapshot.third)
+                depthSaved = true
+            } catch (t: Throwable) {
+                depthSaveError = t.message
+            }
+        }
+        frameCount++
+        coverage.update(snapshot)
+        coverageText.text = coverage.percent().toString() + "% covered"
+        scanStatus.text = when {
+            depthSaved -> "Captured • depth map saved • " + coverage.guidance() + " • frames: " + frameCount
+            depthSnapshot == null -> "Captured • waiting for stable AI depth • frames: " + frameCount
+            else -> "Frame saved • depth map could not be stored" +
+                (depthSaveError?.let { ": " + it } ?: "") + " • frames: " + frameCount
+        }
+    }
+
+    private fun handleCaptureFailure(message: String) {
+        if (finishRequested) {
+            finishRequested = false
+            finalizeScan()
+            return
+        }
+        if (!scanning) return
+        consecutiveCaptureErrors++
+        scanStatus.text = "Camera capture failed (" + consecutiveCaptureErrors + "): " + message
+        if (consecutiveCaptureErrors >= 5) {
+            scanning = false
+            scanStatus.text = "Camera capture repeatedly failed • preserving saved frames"
+            finishScan()
+            return
+        }
+        val exponent = (consecutiveCaptureErrors - 1).coerceIn(0, 3)
+        val retryDelay = minOf(4000L, 500L * (1L shl exponent))
+        previewHandler.postDelayed({ captureFrame() }, retryDelay)
     }
 
     private fun analyzeLiveFrame(image: ImageProxy) {
@@ -211,6 +314,12 @@ class MainActivity : ComponentActivity() {
                 snapshot.motion,
                 snapshot.quality
             )
+            if (scanning) synchronized(depthLock) {
+                latestDepthData = stableDepth.copyOf()
+                latestDepthWidth = result.width
+                latestDepthHeight = result.height
+                latestDepthElapsedMs = SystemClock.elapsedRealtime()
+            }
             val depthBitmap = depthToBitmap(stableDepth, result.width, result.height)
             bitmap.recycle()
             runOnUiThread {
@@ -218,7 +327,7 @@ class MainActivity : ComponentActivity() {
                     coverage.update(snapshot)
                     miniPreview.setDepthPreview(depthBitmap, coverage)
                     coverageText.text = coverage.percent().toString() + "% covered • AI depth • " + result.inferenceMs + "ms"
-                    scanStatus.text = "AI Depth " + result.backend + " • " + result.inferenceMs + "ms • LIVE 3D"
+                    scanStatus.text = "AI Depth " + result.backend + " • " + result.inferenceMs + "ms • DEPTH PREVIEW"
                 } else {
                     depthBitmap.recycle()
                 }
@@ -244,39 +353,118 @@ class MainActivity : ComponentActivity() {
 
     private fun imageToBitmap(image: ImageProxy): Bitmap? {
         if (image.format != ImageFormat.YUV_420_888) return null
-        val yb = image.planes[0].buffer
-        val ub = image.planes[1].buffer
-        val vb = image.planes[2].buffer
-        val y = ByteArray(yb.remaining()).also { yb.get(it) }
-        val u = ByteArray(ub.remaining()).also { ub.get(it) }
-        val v = ByteArray(vb.remaining()).also { vb.get(it) }
-        val nv21 = ByteArray(y.size + u.size + v.size)
-        System.arraycopy(y, 0, nv21, 0, y.size)
-        var p = y.size
-        var i = 0
-        while (i < v.size && i < u.size) {
-            nv21[p++] = v[i]
-            nv21[p++] = u[i]
-            i++
+        val width = image.width
+        val height = image.height
+        if (width <= 0 || height <= 0) return null
+
+        // YUV_420_888 planes may have padded row strides and interleaved chroma.
+        // Read each plane using its own strides instead of assuming contiguous data.
+        val yPlane = image.planes[0]
+        val uPlane = image.planes[1]
+        val vPlane = image.planes[2]
+        val yBuffer = yPlane.buffer.duplicate()
+        val uBuffer = uPlane.buffer.duplicate()
+        val vBuffer = vPlane.buffer.duplicate()
+        val nv21 = ByteArray(width * height + 2 * ((width + 1) / 2) * ((height + 1) / 2))
+        val yBase = yBuffer.position()
+        var target = 0
+        for (row in 0 until height) {
+            val rowBase = yBase + row * yPlane.rowStride
+            for (col in 0 until width) {
+                nv21[target++] = yBuffer.get(rowBase + col * yPlane.pixelStride)
+            }
         }
+
+        val chromaWidth = (width + 1) / 2
+        val chromaHeight = (height + 1) / 2
+        val uBase = uBuffer.position()
+        val vBase = vBuffer.position()
+        for (row in 0 until chromaHeight) {
+            val uRow = uBase + row * uPlane.rowStride
+            val vRow = vBase + row * vPlane.rowStride
+            for (col in 0 until chromaWidth) {
+                nv21[target++] = vBuffer.get(vRow + col * vPlane.pixelStride)
+                nv21[target++] = uBuffer.get(uRow + col * uPlane.pixelStride)
+            }
+        }
+
         val out = ByteArrayOutputStream()
-        YuvImage(nv21, ImageFormat.NV21, image.width, image.height, null)
-            .compressToJpeg(Rect(0, 0, image.width, image.height), if (profile.mode == ScanMode.LOW_RAM) 40 else 50, out)
+        YuvImage(nv21, ImageFormat.NV21, width, height, null)
+            .compressToJpeg(
+                Rect(0, 0, width, height),
+                if (profile.mode == ScanMode.LOW_RAM) 40 else 50,
+                out
+            )
         val bytes = out.toByteArray()
-        val opts = BitmapFactory.Options().apply { inSampleSize = if (profile.mode == ScanMode.LOW_RAM) 16 else 10 }
+        val opts = BitmapFactory.Options().apply {
+            inSampleSize = if (profile.mode == ScanMode.LOW_RAM) 16 else 8
+        }
         return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)
     }
 
     private fun finishScan() {
+        if (reconstructing) return
+        scanning = false
+        if (captureInFlight) {
+            finishRequested = true
+            tracker.stop()
+            objectTracker.clear()
+            trackingOverlay.clearTarget()
+            temporalDepth.reset()
+            startButton.isEnabled = false
+            startButton.text = "Finishing…"
+            scanStatus.text = "Finishing current camera frame…"
+            return
+        }
+        finalizeScan()
+    }
+
+    private fun finalizeScan() {
         scanning = false
         tracker.stop()
         temporalDepth.reset()
         objectTracker.clear()
         trackingOverlay.clearTarget()
-        startButton.text = "Start 3D Scan"
-        val result = scanSession.buildResult(frameCount)
-        scanStatus.text = "Scan saved • " + frameCount + " frames • " + coverage.percent() + "% guide coverage • OBJ + GLB exported"
-        Toast.makeText(this, "Saved: " + result.name, Toast.LENGTH_LONG).show()
+        finishRequested = false
+
+        if (frameCount <= 0) {
+            reconstructing = false
+            startButton.isEnabled = true
+            startButton.text = "Start 3D Scan"
+            scanStatus.text = "No frames saved • improve lighting and try again"
+            return
+        }
+
+        reconstructing = true
+        startButton.isEnabled = false
+        startButton.text = "Building 3D…"
+        scanStatus.text = "Saved " + frameCount + " frames • building depth mesh…"
+        val savedFrameCount = frameCount
+        val savedCoverage = coverage.percent()
+        exportExecutor.execute {
+            try {
+                val result = scanSession.buildResult(savedFrameCount)
+                runOnUiThread {
+                    reconstructing = false
+                    if (isFinishing || isDestroyed) return@runOnUiThread
+                    startButton.isEnabled = true
+                    startButton.text = "Start 3D Scan"
+                    scanStatus.text = "Depth mesh exported • " + savedFrameCount +
+                        " frames • " + savedCoverage + "% guide coverage • OBJ + GLB"
+                    Toast.makeText(this, "Saved: " + result.name, Toast.LENGTH_LONG).show()
+                }
+            } catch (t: Throwable) {
+                runOnUiThread {
+                    reconstructing = false
+                    if (isFinishing || isDestroyed) return@runOnUiThread
+                    startButton.isEnabled = true
+                    startButton.text = "Start 3D Scan"
+                    scanStatus.text = "Frames preserved • mesh export failed: " +
+                        (t.message ?: "AI depth unavailable")
+                    Toast.makeText(this, "Scan saved, but no valid depth mesh was exported", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
     }
 
     override fun onDestroy() {
@@ -286,8 +474,9 @@ class MainActivity : ComponentActivity() {
         objectTracker.clear()
         trackingOverlay.clearTarget()
         previewHandler.removeCallbacksAndMessages(null)
-        depthAi.close()
+        exportExecutor.shutdownNow()
         aiExecutor.shutdownNow()
+        depthAi.close()
         miniPreview.clear()
         super.onDestroy()
     }
