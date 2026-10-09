@@ -65,10 +65,13 @@ class ObjectTracker {
         val x = (nx.coerceIn(0f, 1f) * (bitmap.width - 1)).toInt()
         val y = (ny.coerceIn(0f, 1f) * (bitmap.height - 1)).toInt()
 
-        patch = samplePatch(pixels, bitmap.width, bitmap.height, x, y, patchW, patchH)
+        // Keep the stored anchor aligned with the actual patch when a tap is near an edge.
+        val sampleX = x.coerceIn(patchW / 2, bitmap.width - patchW + patchW / 2)
+        val sampleY = y.coerceIn(patchH / 2, bitmap.height - patchH + patchH / 2)
+        patch = samplePatch(pixels, bitmap.width, bitmap.height, sampleX, sampleY, patchW, patchH)
         patchGrid = normalizedGrid(patch, patchW, patchH)
-        centerX = x / (bitmap.width - 1f)
-        centerY = y / (bitmap.height - 1f)
+        centerX = sampleX / (bitmap.width - 1f)
+        centerY = sampleY / (bitmap.height - 1f)
         misses = 0
         velocityX = 0f
         velocityY = 0f
@@ -320,15 +323,12 @@ class ObjectTracker {
         // Sorting the compact descriptor makes this cue tolerant of quarter-turn
         // rotations of the object's coarse brightness layout. It is only one cue;
         // pixel correlation still helps avoid switching to a different target.
-        val sortedCandidate = candidateGrid.map { value ->
-            ((value - candidateGridMean) / gridScale).coerceIn(-3f, 3f)
-        }.sorted()
-        val sortedTemplate = patchGrid.sorted()
-        var rotationTolerantError = 0f
-        for (index in sortedCandidate.indices) {
-            rotationTolerantError += abs(sortedCandidate[index] - sortedTemplate[index]).coerceAtMost(6f)
+        val normalizedCandidate = FloatArray(9) { index ->
+            ((candidateGrid[index] - candidateGridMean) / gridScale).coerceIn(-3f, 3f)
         }
-        val rotationTolerantSimilarity = (1f - rotationTolerantError / (9f * 4f)).coerceIn(0f, 1f)
+        // Compare real 3x3 layouts under quarter-turns and mirror transforms.
+        // Unlike sorting every cell, this preserves useful spatial structure.
+        val rotationTolerantSimilarity = rotationInvariantGridSimilarity(normalizedCandidate)
         val gridSimilarity = (1f - gridError / (9f * 4f)).coerceIn(0f, 1f)
 
         // More weight on normalized correlation and coarse appearance cues makes
@@ -337,6 +337,31 @@ class ObjectTracker {
             correlationSimilarity * 0.42f +
             gridSimilarity * 0.12f +
             rotationTolerantSimilarity * 0.18f).coerceIn(0f, 1f)
+    }
+
+    private fun rotationInvariantGridSimilarity(candidate: FloatArray): Float {
+        if (candidate.size != 9 || patchGrid.size != 9) return 0f
+        var bestError = Float.POSITIVE_INFINITY
+        for (flip in 0..1) {
+            for (rotation in 0..3) {
+                var error = 0f
+                for (y in 0..2) {
+                    for (x in 0..2) {
+                        var sourceX = if (flip == 1) 2 - x else x
+                        var sourceY = y
+                        repeat(rotation) {
+                            val previousX = sourceX
+                            sourceX = sourceY
+                            sourceY = 2 - previousX
+                        }
+                        error += abs(candidate[sourceY * 3 + sourceX] - patchGrid[y * 3 + x])
+                            .coerceAtMost(6f)
+                    }
+                }
+                if (error < bestError) bestError = error
+            }
+        }
+        return (1f - bestError / (9f * 4f)).coerceIn(0f, 1f)
     }
 
     private fun normalizedGrid(values: FloatArray, width: Int, height: Int): FloatArray {
@@ -362,7 +387,7 @@ class ObjectTracker {
         val scale = sqrt(variance / 9f).coerceAtLeast(0.035f)
         return FloatArray(9) { cell ->
             ((means[cell] - mean) / scale).coerceIn(-3f, 3f)
-        }.sorted().toFloatArray()
+        }
     }
 
     private fun gray(pixel: Int): Float =
