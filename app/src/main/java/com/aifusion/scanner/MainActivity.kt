@@ -323,7 +323,12 @@ class MainActivity : ComponentActivity() {
         runOnUiThread { if (scanning) hologramOverlay.updateTarget(track.x, track.y, track.tracked) }
         runOnUiThread {
             if (scanning && track.tracked) {
-                trackingOverlay.setTarget(track.x, track.y, active = true)
+                trackingOverlay.setTarget(
+                    track.x, track.y,
+                    width = track.width.coerceIn(0.10f, 0.65f),
+                    height = track.height.coerceIn(0.10f, 0.65f),
+                    active = true
+                )
             } else if (scanning && objectTracker.isActive()) {
                 trackingOverlay.setTracking(false)
             }
@@ -361,7 +366,15 @@ class MainActivity : ComponentActivity() {
                     miniPreview.setDepthPreview(depthBitmap, coverage, track.x, track.y, objectLockActive, track.tracked)
                     coverageText.visibility = View.VISIBLE
                     coverageText.text = coverage.percent().toString() + "% covered • AI depth • " + result.inferenceMs + "ms"
-                    scanStatus.text = "AI Depth " + result.backend + " • " + result.inferenceMs + "ms • DEPTH PREVIEW"
+                    scanStatus.text = when {
+                        objectLockActive && !track.tracked ->
+                            "TARGET LOST • hold still and reveal the same object • depth preview paused for target"
+                        objectLockActive ->
+                            "TARGET LOCKED • confidence " + (track.score * 100f).toInt().coerceIn(0, 100) +
+                                "% • AI Depth " + result.inferenceMs + "ms"
+                        else ->
+                            "AI Depth " + result.backend + " • " + result.inferenceMs + "ms • DEPTH PREVIEW"
+                    }
                 } else {
                     depthBitmap.recycle()
                 }
