@@ -68,7 +68,7 @@ class ObjectTracker {
         misses = 0
         velocityX = 0f
         velocityY = 0f
-        smoothedScore = 1f
+        smoothedScore = 0f
         active = patch.isNotEmpty()
     }
 
@@ -180,7 +180,7 @@ class ObjectTracker {
         centerY = (centerY + deltaY * 0.52f).coerceIn(0f, 1f)
         velocityX = (velocityX * 0.35f + deltaX * 0.65f).coerceIn(-0.12f, 0.12f)
         velocityY = (velocityY * 0.35f + deltaY * 0.65f).coerceIn(-0.12f, 0.12f)
-        smoothedScore = smoothedScore * 0.65f + bestVisualScore * 0.35f
+        smoothedScore = if (smoothedScore <= 0f) bestVisualScore else smoothedScore * 0.65f + bestVisualScore * 0.35f
 
         val moved = sqrt(
             ((bestX - previousX) * (bestX - previousX) + (bestY - previousY) * (bestY - previousY)).toFloat()
