@@ -32,6 +32,9 @@
             android:textColor="#FFFFFFFF" android:textSize="11sp" android:textStyle="bold" android:background="#CC0B1015" />
     </LinearLayout>
     <Button
+        android:id="@+id/trackingLock" android:layout_width="wrap_content" android:layout_height="wrap_content"
+        android:layout_gravity="bottom|center_horizontal" android:layout_marginBottom="86dp" android:text="Lock Target" />
+    <Button
         android:id="@+id/startScan" android:layout_width="wrap_content" android:layout_height="wrap_content"
         android:layout_gravity="bottom|center_horizontal" android:layout_marginBottom="30dp" android:text="Start 3D Scan" />
 </FrameLayout>
