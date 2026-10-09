@@ -62,6 +62,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var scanSession: ScanSession
     private lateinit var depthAi: DepthAiEngine
     private val temporalDepth = TemporalDepthFilter()
+    private val temporalDepthLock = Any()
     @Volatile private var scanning = false
     private var frameCount = 0
     @Volatile private var captureInFlight = false
@@ -182,7 +183,7 @@ class MainActivity : ComponentActivity() {
         objectTracker.clear()
         trackingOverlay.clearTarget()
         trackingLockButton.text = "Lock Target"
-        temporalDepth.reset()
+        synchronized(temporalDepthLock) { temporalDepth.reset() }
         startButton.isEnabled = true
         startButton.text = "Stop 3D Scan"
         coverageText.text = "0% covered • LIVE"
@@ -389,13 +390,15 @@ class MainActivity : ComponentActivity() {
         var outputBitmap: Bitmap? = null
         try {
             val result = depthAi.estimate(bitmap)
-            val stableDepth = temporalDepth.filter(
-                result.depth,
-                result.width,
-                result.height,
-                snapshot.motion,
-                snapshot.quality
-            )
+            val stableDepth = synchronized(temporalDepthLock) {
+                temporalDepth.filter(
+                    result.depth,
+                    result.width,
+                    result.height,
+                    snapshot.motion,
+                    snapshot.quality
+                )
+            }
             if (scanning) synchronized(depthLock) {
                 latestDepthData = stableDepth.copyOf()
                 latestDepthWidth = result.width
@@ -579,7 +582,7 @@ class MainActivity : ComponentActivity() {
             tracker.stop()
             objectTracker.clear()
             trackingOverlay.clearTarget()
-            temporalDepth.reset()
+            synchronized(temporalDepthLock) { temporalDepth.reset() }
             startButton.isEnabled = false
             startButton.text = "Finishing…"
             scanStatus.text = "Finishing current camera frame…"
@@ -592,7 +595,7 @@ class MainActivity : ComponentActivity() {
         scanning = false
         hologramOverlay.setActive(false)
         tracker.stop()
-        temporalDepth.reset()
+        synchronized(temporalDepthLock) { temporalDepth.reset() }
         objectTracker.clear()
         trackingOverlay.clearTarget()
         trackingLockButton.text = "Lock Target"
@@ -643,7 +646,7 @@ class MainActivity : ComponentActivity() {
         scanning = false
         hologramOverlay.setActive(false)
         tracker.stop()
-        temporalDepth.reset()
+        synchronized(temporalDepthLock) { temporalDepth.reset() }
         objectTracker.clear()
         trackingOverlay.clearTarget()
         previewHandler.removeCallbacksAndMessages(null)
