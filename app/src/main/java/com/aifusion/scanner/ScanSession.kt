@@ -188,8 +188,8 @@ object MeshExporter {
             vertex += 3
         }
         val gltfJson = json.replace(
-            "\\\"count\\\":${mesh.vertices.size/3},\\\"type\\\":\\\"VEC3\\\"}",
-            "\\\"count\\\":${mesh.vertices.size/3},\\\"type\\\":\\\"VEC3\\\",\\\"min\\\":[$minX,$minY,$minZ],\\\"max\\\":[$maxX,$maxY,$maxZ]}"
+            "\"count\":${mesh.vertices.size/3},\"type\":\"VEC3\"}",
+            "\"count\":${mesh.vertices.size/3},\"type\":\"VEC3\",\"min\":[$minX,$minY,$minZ],\"max\":[$maxX,$maxY,$maxZ]}"
         )
         val jb = gltfJson.toByteArray(Charsets.UTF_8)
         val jp = (4 - jb.size % 4) % 4
