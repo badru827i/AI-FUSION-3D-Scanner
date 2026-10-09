@@ -40,6 +40,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var trackingLockButton: Button
     private lateinit var miniPreview: Scan3DPreviewView
     private lateinit var trackingOverlay: TrackingOverlayView
+    private lateinit var hologramOverlay: HologramAnalysisOverlayView
     private val objectTracker = ObjectTracker()
     @Volatile private var pendingTargetX: Float? = null
     @Volatile private var pendingTargetY: Float? = null
@@ -91,6 +92,7 @@ class MainActivity : ComponentActivity() {
         miniPreview = findViewById(R.id.miniPreview)
         miniPreview.visibility = View.GONE
         trackingOverlay = findViewById(R.id.trackingOverlay)
+        hologramOverlay = findViewById(R.id.hologramOverlay)
         trackingOverlay.onTargetSelected = { x, y ->
             pendingTargetX = x
             pendingTargetY = y
@@ -104,6 +106,7 @@ class MainActivity : ComponentActivity() {
         coverage = ScanCoverage()
         scanSession = ScanSession(this, profile)
         depthAi = DepthAiEngine(this, profile)
+        hologramOverlay.setLowPowerMode(profile.mode == ScanMode.LOW_RAM)
 
         deviceStatus.text = "AI-FUSION • " + SmartDeviceEngine.summary(profile) + " • Depth AI " + depthAi.backend
         startButton.setOnClickListener { if (!scanning) startScan() else finishScan() }
@@ -153,6 +156,7 @@ class MainActivity : ComponentActivity() {
             return
         }
         scanning = true
+        hologramOverlay.setActive(true)
         finishRequested = false
         frameCount = 0
         lastPreviewMs = 0L
@@ -316,6 +320,7 @@ class MainActivity : ComponentActivity() {
         }
         val track = objectTracker.update(bitmap)
         val objectLockActive = objectTracker.isActive()
+        runOnUiThread { if (scanning) hologramOverlay.updateTarget(track.x, track.y, track.tracked) }
         runOnUiThread {
             if (scanning && track.tracked) {
                 trackingOverlay.setTarget(track.x, track.y, active = true)
@@ -434,6 +439,7 @@ class MainActivity : ComponentActivity() {
     private fun finishScan() {
         if (reconstructing) return
         scanning = false
+        hologramOverlay.setActive(false)
         trackingLockButton.text = "Lock Target"
         if (captureInFlight) {
             finishRequested = true
@@ -451,6 +457,7 @@ class MainActivity : ComponentActivity() {
 
     private fun finalizeScan() {
         scanning = false
+        hologramOverlay.setActive(false)
         tracker.stop()
         temporalDepth.reset()
         objectTracker.clear()
@@ -501,6 +508,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         scanning = false
+        hologramOverlay.setActive(false)
         tracker.stop()
         temporalDepth.reset()
         objectTracker.clear()
