@@ -36,6 +36,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var deviceStatus: TextView
     private lateinit var scanStatus: TextView
     private lateinit var startButton: Button
+    private lateinit var trackingLockButton: Button
     private lateinit var miniPreview: Scan3DPreviewView
     private lateinit var trackingOverlay: TrackingOverlayView
     private val objectTracker = ObjectTracker()
@@ -73,6 +74,17 @@ class MainActivity : ComponentActivity() {
         deviceStatus = findViewById(R.id.deviceStatus)
         scanStatus = findViewById(R.id.scanStatus)
         startButton = findViewById(R.id.startScan)
+        trackingLockButton = findViewById(R.id.trackingLock)
+        trackingLockButton.setOnClickListener {
+            if (objectTracker.isActive()) {
+                objectTracker.clear()
+                trackingOverlay.clearTarget()
+                trackingLockButton.text = "Lock Target"
+                scanStatus.text = "Tracking unlocked • tap object to lock again"
+            } else {
+                scanStatus.text = if (scanning) "Tap an object in the preview to lock tracking" else "Start scan, then tap an object to lock tracking"
+            }
+        }
         miniPreview = findViewById(R.id.miniPreview)
         trackingOverlay = findViewById(R.id.trackingOverlay)
         trackingOverlay.onTargetSelected = { x, y ->
@@ -151,6 +163,7 @@ class MainActivity : ComponentActivity() {
         tracker.start()
         objectTracker.clear()
         trackingOverlay.clearTarget()
+        trackingLockButton.text = "Lock Target"
         temporalDepth.reset()
         startButton.isEnabled = true
         startButton.text = "Stop 3D Scan"
@@ -285,7 +298,15 @@ class MainActivity : ComponentActivity() {
             objectTracker.lock(bitmap, requestX, requestY)
             pendingTargetX = null
             pendingTargetY = null
-            runOnUiThread { if (scanning) scanStatus.text = "Object locked • tracking + AI depth" }
+            runOnUiThread {
+                if (scanning && objectTracker.isActive()) {
+                    trackingLockButton.text = "Unlock Target"
+                    scanStatus.text = "Object locked • stable tracking + AI depth"
+                } else if (scanning) {
+                    trackingLockButton.text = "Lock Target"
+                    scanStatus.text = "Target not lockable • tap a clearer feature"
+                }
+            }
         }
         val track = objectTracker.update(bitmap)
         runOnUiThread {
@@ -425,6 +446,7 @@ class MainActivity : ComponentActivity() {
         temporalDepth.reset()
         objectTracker.clear()
         trackingOverlay.clearTarget()
+        trackingLockButton.text = "Lock Target"
         finishRequested = false
 
         if (frameCount <= 0) {
