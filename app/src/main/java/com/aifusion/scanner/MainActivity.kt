@@ -222,16 +222,24 @@ class MainActivity : ComponentActivity() {
                 Triple(data.copyOf(), latestDepthWidth, latestDepthHeight)
             } else null
         }
+        var depthSaved = false
+        var depthSaveError: String? = null
         if (depthSnapshot != null) {
-            scanSession.recordDepthMap(frameIndex, depthSnapshot.first, depthSnapshot.second, depthSnapshot.third)
+            try {
+                scanSession.recordDepthMap(frameIndex, depthSnapshot.first, depthSnapshot.second, depthSnapshot.third)
+                depthSaved = true
+            } catch (t: Throwable) {
+                depthSaveError = t.message
+            }
         }
         frameCount++
         coverage.update(snapshot)
         coverageText.text = coverage.percent().toString() + "% covered"
-        scanStatus.text = if (depthSnapshot != null) {
-            "Captured • depth map saved • " + coverage.guidance() + " • frames: " + frameCount
-        } else {
-            "Captured • waiting for stable AI depth • frames: " + frameCount
+        scanStatus.text = when {
+            depthSaved -> "Captured • depth map saved • " + coverage.guidance() + " • frames: " + frameCount
+            depthSnapshot == null -> "Captured • waiting for stable AI depth • frames: " + frameCount
+            else -> "Frame saved • depth map could not be stored" +
+                (depthSaveError?.let { ": " + it } ?: "") + " • frames: " + frameCount
         }
     }
 
