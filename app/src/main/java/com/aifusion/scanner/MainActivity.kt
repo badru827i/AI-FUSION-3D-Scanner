@@ -16,14 +16,20 @@ import android.widget.Button
 import android.widget.TextView
 import android.widget.Toast
 import android.util.Size
+import android.hardware.camera2.CaptureRequest
+import android.util.Range
 import android.view.View
 import androidx.activity.ComponentActivity
+import androidx.camera.camera2.interop.Camera2Interop
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
+import androidx.camera.core.resolutionselector.AspectRatioStrategy
+import androidx.camera.core.resolutionselector.ResolutionSelector
+import androidx.camera.core.resolutionselector.ResolutionStrategy
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.core.app.ActivityCompat
@@ -136,13 +142,35 @@ class MainActivity : ComponentActivity() {
         val future = ProcessCameraProvider.getInstance(this)
         future.addListener({
             val provider = future.get()
-            val preview = Preview.Builder().build().also { it.surfaceProvider = previewView.surfaceProvider }
-            imageCapture = ImageCapture.Builder()
-                .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
-                .setJpegQuality(if (profile.mode == ScanMode.LOW_RAM) 65 else 85)
+            // Request a 16:9 Full-HD camera stream when the device supports it.
+            // CameraX selects a compatible fallback on entry-level cameras.
+            val fhdSelector = ResolutionSelector.Builder()
+                .setAspectRatioStrategy(AspectRatioStrategy.RATIO_16_9_FALLBACK_AUTO_STRATEGY)
+                .setResolutionStrategy(
+                    ResolutionStrategy(
+                        Size(1920, 1080),
+                        ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER
+                    )
+                )
                 .build()
+            val previewBuilder = Preview.Builder()
+                .setResolutionSelector(fhdSelector)
+            // Best-effort 30 FPS request; the camera HAL may choose a supported range instead.
+            Camera2Interop.Extender(previewBuilder).setCaptureRequestOption(
+                CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE,
+                Range(30, 30)
+            )
+            val preview = previewBuilder.build().also {
+                it.surfaceProvider = previewView.surfaceProvider
+            }
+            imageCapture = ImageCapture.Builder()
+                .setResolutionSelector(fhdSelector)
+                .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
+                .setJpegQuality(if (profile.mode == ScanMode.LOW_RAM) 75 else 92)
+                .build()
+            // Keep AI analysis intentionally smaller so FHD preview does not overload RAM/CPU.
             imageAnalysis = ImageAnalysis.Builder()
-                .setTargetResolution(if (profile.mode == ScanMode.LOW_RAM) Size(480, 360) else Size(640, 480))
+                .setTargetResolution(if (profile.mode == ScanMode.LOW_RAM) Size(640, 360) else Size(960, 540))
                 .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                 .setImageQueueDepth(1)
                 .build()
@@ -554,12 +582,12 @@ class MainActivity : ComponentActivity() {
         YuvImage(nv21, ImageFormat.NV21, width, height, null)
             .compressToJpeg(
                 Rect(0, 0, width, height),
-                if (profile.mode == ScanMode.LOW_RAM) 40 else 50,
+                if (profile.mode == ScanMode.LOW_RAM) 55 else 72,
                 out
             )
         val bytes = out.toByteArray()
         val opts = BitmapFactory.Options().apply {
-            inSampleSize = if (profile.mode == ScanMode.LOW_RAM) 16 else 8
+            inSampleSize = if (profile.mode == ScanMode.LOW_RAM) 8 else 4
         }
         val decoded = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts) ?: return null
         val rotation = image.imageInfo.rotationDegrees
