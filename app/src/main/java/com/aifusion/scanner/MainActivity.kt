@@ -83,6 +83,7 @@ class MainActivity : ComponentActivity() {
             scanStatus.text = if (scanning) "Target selected • locking object…" else "Target selected • press Start 3D Scan"
         }
         coverageText = findViewById(R.id.coverageText)
+        coverageText.visibility = View.GONE
 
         profile = SmartDeviceEngine.detect(this)
         tracker = CameraTracking(this, profile)
@@ -150,6 +151,7 @@ class MainActivity : ComponentActivity() {
         }
         coverage.reset()
         miniPreview.clear()
+        coverageText.visibility = View.GONE
         tracker.start()
         objectTracker.clear()
         trackingOverlay.clearTarget()
@@ -329,6 +331,7 @@ class MainActivity : ComponentActivity() {
                 if (scanning) {
                     coverage.update(snapshot)
                     miniPreview.setDepthPreview(depthBitmap, coverage, track.x, track.y, objectLockActive, track.tracked)
+                    coverageText.visibility = View.VISIBLE
                     coverageText.text = coverage.percent().toString() + "% covered • AI depth • " + result.inferenceMs + "ms"
                     scanStatus.text = "AI Depth " + result.backend + " • " + result.inferenceMs + "ms • DEPTH PREVIEW"
                 } else {
