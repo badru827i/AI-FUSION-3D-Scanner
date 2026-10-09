@@ -76,7 +76,7 @@ class ObjectTracker {
         active = patch.isNotEmpty()
     }
 
-    fun update(bitmap: Bitmap): ObjectTrackResult {
+    fun update(bitmap: Bitmap, cameraMotion: Float = 0f): ObjectTrackResult {
         if (!active || patch.isEmpty() || bitmap.width < patchW || bitmap.height < patchH) {
             return ObjectTrackResult(centerX, centerY, 0f, false, misses)
         }
@@ -97,8 +97,15 @@ class ObjectTracker {
         val maxX = width - patchW + patchW / 2
         val maxY = height - patchH + patchH / 2
 
-        val baseRadius = max(8, min(width, height) / 3)
-        val allowedRadius = max(width, height) / 2
+        // Expand the local search when gyro/accelerometer reports a camera turn.
+        // This improves reacquisition without paying for a full-frame search each frame.
+        val motionExpansion = when {
+            cameraMotion > 5f -> 0.22f
+            cameraMotion > 2f -> 0.12f
+            else -> 0f
+        }
+        val baseRadius = max(8, (min(width, height) * (1f / 3f + motionExpansion)).toInt())
+        val allowedRadius = (max(width, height) * 0.70f).toInt()
         val searchRadius = min(allowedRadius, baseRadius * (1 + misses.coerceAtMost(2)))
         val searchCenterX = if (misses == 0) predictedX else previousX
         val searchCenterY = if (misses == 0) predictedY else previousY
@@ -177,11 +184,13 @@ class ObjectTracker {
         misses = 0
         val targetX = bestX / (width - 1f)
         val targetY = bestY / (height - 1f)
-        val deltaX = (targetX - centerX).coerceIn(-0.18f, 0.18f)
-        val deltaY = (targetY - centerY).coerceIn(-0.18f, 0.18f)
-        // Smooth the position while maintaining a bounded velocity estimate.
-        centerX = (centerX + deltaX * 0.52f).coerceIn(0f, 1f)
-        centerY = (centerY + deltaY * 0.52f).coerceIn(0f, 1f)
+        val deltaX = (targetX - centerX).coerceIn(-0.24f, 0.24f)
+        val deltaY = (targetY - centerY).coerceIn(-0.24f, 0.24f)
+        // Follow faster-moving targets more responsively while keeping low-motion
+        // frames stable against jitter.
+        val follow = if (abs(deltaX) + abs(deltaY) > 0.035f) 0.62f else 0.44f
+        centerX = (centerX + deltaX * follow).coerceIn(0f, 1f)
+        centerY = (centerY + deltaY * follow).coerceIn(0f, 1f)
         velocityX = (velocityX * 0.35f + deltaX * 0.65f).coerceIn(-0.12f, 0.12f)
         velocityY = (velocityY * 0.35f + deltaY * 0.65f).coerceIn(-0.12f, 0.12f)
         smoothedScore = if (smoothedScore <= 0f) bestVisualScore else smoothedScore * 0.65f + bestVisualScore * 0.35f
@@ -280,6 +289,8 @@ class ObjectTracker {
             }
         }
 
+        // Absolute pixels remain useful, but receive less weight so exposure and
+        // lighting changes do not dominate the match score.
         val rawSimilarity = (1f - absoluteError / count).coerceIn(0f, 1f)
         val varianceProduct = templateVariance * candidateVariance
         val correlationSimilarity = if (varianceProduct < 1e-7f) {
@@ -306,13 +317,26 @@ class ObjectTracker {
             val normalized = ((candidateGrid[index] - candidateGridMean) / gridScale).coerceIn(-3f, 3f)
             gridError += abs(normalized - patchGrid[index]).coerceAtMost(6f)
         }
+        // Sorting the compact descriptor makes this cue tolerant of quarter-turn
+        // rotations of the object's coarse brightness layout. It is only one cue;
+        // pixel correlation still helps avoid switching to a different target.
+        val sortedCandidate = candidateGrid.map { value ->
+            ((value - candidateGridMean) / gridScale).coerceIn(-3f, 3f)
+        }.sorted()
+        val sortedTemplate = patchGrid.sorted()
+        var rotationTolerantError = 0f
+        for (index in sortedCandidate.indices) {
+            rotationTolerantError += abs(sortedCandidate[index] - sortedTemplate[index]).coerceAtMost(6f)
+        }
+        val rotationTolerantSimilarity = (1f - rotationTolerantError / (9f * 4f)).coerceIn(0f, 1f)
         val gridSimilarity = (1f - gridError / (9f * 4f)).coerceIn(0f, 1f)
 
-        // Keep pixel similarity as the main signal; spatial layout adds a
-        // lightweight second cue without relying on a remote model or NPU.
-        return (rawSimilarity * 0.50f +
-            correlationSimilarity * 0.35f +
-            gridSimilarity * 0.15f).coerceIn(0f, 1f)
+        // More weight on normalized correlation and coarse appearance cues makes
+        // the lock less sensitive to lighting/background changes and mild turns.
+        return (rawSimilarity * 0.28f +
+            correlationSimilarity * 0.42f +
+            gridSimilarity * 0.12f +
+            rotationTolerantSimilarity * 0.18f).coerceIn(0f, 1f)
     }
 
     private fun normalizedGrid(values: FloatArray, width: Int, height: Int): FloatArray {
@@ -338,7 +362,7 @@ class ObjectTracker {
         val scale = sqrt(variance / 9f).coerceAtLeast(0.035f)
         return FloatArray(9) { cell ->
             ((means[cell] - mean) / scale).coerceIn(-3f, 3f)
-        }
+        }.sorted().toFloatArray()
     }
 
     private fun gray(pixel: Int): Float =
