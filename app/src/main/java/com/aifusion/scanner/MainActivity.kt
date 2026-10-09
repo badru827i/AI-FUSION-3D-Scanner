@@ -330,7 +330,11 @@ class MainActivity : ComponentActivity() {
         }
 
         val now = SystemClock.elapsedRealtime()
-        val trackingInterval = if (profile.mode == ScanMode.LOW_RAM) 260L else 130L
+        val trackingInterval = when (profile.mode) {
+            ScanMode.LOW_RAM -> 260L
+            ScanMode.BALANCED -> 100L
+            ScanMode.PERFORMANCE -> 66L
+        }
         val hasPendingTarget = pendingTargetX != null && pendingTargetY != null
         if (!hasPendingTarget && now - lastTrackMs < trackingInterval) {
             image.close()
@@ -393,7 +397,11 @@ class MainActivity : ComponentActivity() {
         }
 
         // Depth is intentionally less frequent; it must not block the tracking updates above.
-        val depthInterval = if (profile.mode == ScanMode.LOW_RAM) 1100L else 650L
+        val depthInterval = when (profile.mode) {
+            ScanMode.LOW_RAM -> 1100L
+            ScanMode.BALANCED -> 650L
+            ScanMode.PERFORMANCE -> 450L
+        }
         if (now - lastPreviewMs < depthInterval || !depthInFlight.compareAndSet(false, true)) {
             bitmap.recycle()
             return
@@ -587,7 +595,11 @@ class MainActivity : ComponentActivity() {
             )
         val bytes = out.toByteArray()
         val opts = BitmapFactory.Options().apply {
-            inSampleSize = if (profile.mode == ScanMode.LOW_RAM) 8 else 4
+            inSampleSize = when (profile.mode) {
+                ScanMode.LOW_RAM -> 8
+                ScanMode.BALANCED -> 4
+                ScanMode.PERFORMANCE -> 2
+            }
         }
         val decoded = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts) ?: return null
         val rotation = image.imageInfo.rotationDegrees
