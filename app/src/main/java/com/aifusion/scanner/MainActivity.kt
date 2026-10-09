@@ -32,6 +32,7 @@ import java.io.ByteArrayOutputStream
 import java.io.File
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
 
 class MainActivity : ComponentActivity() {
     private lateinit var previewView: PreviewView
@@ -50,14 +51,18 @@ class MainActivity : ComponentActivity() {
     private lateinit var imageCapture: ImageCapture
     private lateinit var imageAnalysis: ImageAnalysis
     private val previewHandler = Handler(Looper.getMainLooper())
+    // Keep camera tracking responsive while the heavier depth model runs independently.
     private val aiExecutor: ExecutorService = Executors.newSingleThreadExecutor()
+    private val depthExecutor: ExecutorService = Executors.newSingleThreadExecutor()
+    private val depthInFlight = AtomicBoolean(false)
+    private var lastTrackMs = 0L
     private var lastPreviewMs = 0L
     private lateinit var tracker: CameraTracking
     private lateinit var coverage: ScanCoverage
     private lateinit var scanSession: ScanSession
     private lateinit var depthAi: DepthAiEngine
     private val temporalDepth = TemporalDepthFilter()
-    private var scanning = false
+    @Volatile private var scanning = false
     private var frameCount = 0
     @Volatile private var captureInFlight = false
     private var finishRequested = false
@@ -161,6 +166,7 @@ class MainActivity : ComponentActivity() {
         hologramOverlay.setActive(true)
         finishRequested = false
         frameCount = 0
+        lastTrackMs = 0L
         lastPreviewMs = 0L
         consecutiveCaptureErrors = 0
         synchronized(depthLock) {
@@ -293,13 +299,16 @@ class MainActivity : ComponentActivity() {
             image.close()
             return
         }
-        val now = System.currentTimeMillis()
-        val interval = if (profile.mode == ScanMode.LOW_RAM) 900L else 500L
-        if (now - lastPreviewMs < interval) {
+
+        val now = SystemClock.elapsedRealtime()
+        val trackingInterval = if (profile.mode == ScanMode.LOW_RAM) 260L else 130L
+        val hasPendingTarget = pendingTargetX != null && pendingTargetY != null
+        if (!hasPendingTarget && now - lastTrackMs < trackingInterval) {
             image.close()
             return
         }
-        lastPreviewMs = now
+        lastTrackMs = now
+
         val bitmap = imageToBitmap(image)
         image.close()
         if (bitmap == null) return
@@ -315,44 +324,69 @@ class MainActivity : ComponentActivity() {
             runOnUiThread {
                 if (scanning && objectTracker.isActive()) {
                     trackingLockButton.text = "Unlock Target"
-                    scanStatus.text = "Object locked • stable tracking + AI depth"
+                    scanStatus.text = "Object locked • smoothing tracking"
                 } else if (scanning) {
                     trackingLockButton.text = "Lock Target"
                     scanStatus.text = "Target not lockable • tap a clearer feature"
                 }
             }
         }
-        // Read motion before tracking so the search window can react to this frame's camera movement.
+
+        // Tracking is updated on its own cadence and no longer waits for AI-depth inference.
         val snapshot = tracker.snapshot()
         val track = objectTracker.update(bitmap, snapshot.motion)
         val objectLockActive = objectTracker.isActive()
         val displayTarget = frameToViewTarget(track.x, track.y, track.width, track.height, bitmap)
         runOnUiThread {
-            if (scanning) hologramOverlay.updateTarget(
+            if (!scanning) return@runOnUiThread
+            hologramOverlay.updateTarget(
                 displayTarget.x, displayTarget.y, track.tracked,
                 displayTarget.width, displayTarget.height, objectLockActive
             )
-        }
-        runOnUiThread {
-            if (scanning && track.tracked) {
+            if (track.tracked) {
                 trackingOverlay.setTarget(
                     displayTarget.x, displayTarget.y,
                     width = displayTarget.width.coerceIn(0.08f, 0.65f),
                     height = displayTarget.height.coerceIn(0.08f, 0.65f),
                     active = true
                 )
-            } else if (scanning && objectTracker.isActive()) {
+            } else if (objectLockActive) {
                 trackingOverlay.setTracking(false)
             }
         }
+
         if (snapshot.quality == "TOO_FAST") {
             bitmap.recycle()
             runOnUiThread {
-                if (scanning) scanStatus.text = "Move slower • AI depth paused • tracking"
+                if (scanning) scanStatus.text = "Move slower • AI depth paused • tracking continues"
             }
             return
         }
 
+        // Depth is intentionally less frequent; it must not block the tracking updates above.
+        val depthInterval = if (profile.mode == ScanMode.LOW_RAM) 1100L else 650L
+        if (now - lastPreviewMs < depthInterval || !depthInFlight.compareAndSet(false, true)) {
+            bitmap.recycle()
+            return
+        }
+        lastPreviewMs = now
+        try {
+            depthExecutor.execute {
+                processDepthFrame(bitmap, snapshot, track, objectLockActive)
+            }
+        } catch (t: Throwable) {
+            if (!bitmap.isRecycled) bitmap.recycle()
+            depthInFlight.set(false)
+        }
+    }
+
+    private fun processDepthFrame(
+        bitmap: Bitmap,
+        snapshot: TrackingSnapshot,
+        track: ObjectTrackResult,
+        objectLockActive: Boolean
+    ) {
+        var outputBitmap: Bitmap? = null
         try {
             val result = depthAi.estimate(bitmap)
             val stableDepth = temporalDepth.filter(
@@ -368,12 +402,14 @@ class MainActivity : ComponentActivity() {
                 latestDepthHeight = result.height
                 latestDepthElapsedMs = SystemClock.elapsedRealtime()
             }
-            val depthBitmap = depthToBitmap(stableDepth, result.width, result.height)
-            bitmap.recycle()
+            outputBitmap = depthToBitmap(stableDepth, result.width, result.height)
+            val depthPreview = outputBitmap
             runOnUiThread {
-                if (scanning) {
+                if (scanning && !isDestroyed) {
                     coverage.update(snapshot)
-                    miniPreview.setDepthPreview(depthBitmap, coverage, track.x, track.y, objectLockActive, track.tracked)
+                    miniPreview.setDepthPreview(
+                        depthPreview, coverage, track.x, track.y, objectLockActive, track.tracked
+                    )
                     coverageText.visibility = View.VISIBLE
                     coverageText.text = coverage.percent().toString() + "% covered • AI depth • " + result.inferenceMs + "ms"
                     scanStatus.text = when {
@@ -385,15 +421,21 @@ class MainActivity : ComponentActivity() {
                         else ->
                             "AI Depth " + result.backend + " • " + result.inferenceMs + "ms • DEPTH PREVIEW"
                     }
-                } else {
-                    depthBitmap.recycle()
+                } else if (!depthPreview.isRecycled) {
+                    depthPreview.recycle()
                 }
             }
+            outputBitmap = null // Ownership passes to the main-thread preview callback.
         } catch (t: Throwable) {
-            bitmap.recycle()
             runOnUiThread {
-                if (scanning) scanStatus.text = "AI Depth fallback • " + (t.message ?: "inference unavailable")
+                if (scanning && !isDestroyed) {
+                    scanStatus.text = "AI Depth fallback • " + (t.message ?: "inference unavailable")
+                }
             }
+        } finally {
+            if (!bitmap.isRecycled) bitmap.recycle()
+            outputBitmap?.let { if (!it.isRecycled) it.recycle() }
+            depthInFlight.set(false)
         }
     }
 
@@ -607,6 +649,7 @@ class MainActivity : ComponentActivity() {
         previewHandler.removeCallbacksAndMessages(null)
         exportExecutor.shutdownNow()
         aiExecutor.shutdownNow()
+        depthExecutor.shutdownNow()
         depthAi.close()
         miniPreview.clear()
         super.onDestroy()
