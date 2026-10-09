@@ -368,7 +368,7 @@ class MainActivity : ComponentActivity() {
                     coverageText.text = coverage.percent().toString() + "% covered • AI depth • " + result.inferenceMs + "ms"
                     scanStatus.text = when {
                         objectLockActive && !track.tracked ->
-                            "TARGET LOST • hold still and reveal the same object • depth preview paused for target"
+                            "TARGET LOST • hold still and reveal the same object • relocalising"
                         objectLockActive ->
                             "TARGET LOCKED • confidence " + (track.score * 100f).toInt().coerceIn(0, 100) +
                                 "% • AI Depth " + result.inferenceMs + "ms"
