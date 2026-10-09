@@ -113,10 +113,18 @@ class ObjectTracker {
         // a similar background texture and makes the overlay jump.
         val baseRadius = max(8, (min(width, height) * (0.12f + motionExpansion)).toInt())
         val allowedRadius = (max(width, height) * 0.48f).toInt()
-        val searchRadius = min(allowedRadius, baseRadius * (1 + misses.coerceAtMost(2)))
+        // After repeated misses, widen to a genuine full-frame relocalization pass.
+        // Use a coarser stride during recovery to cap CPU work on entry-level phones.
+        val fullFrameRecovery = misses >= 2
+        val searchRadius = if (fullFrameRecovery) max(width, height)
+            else min(allowedRadius, baseRadius * (1 + misses.coerceAtMost(2)))
         val searchCenterX = if (misses == 0) predictedX else previousX
         val searchCenterY = if (misses == 0) predictedY else previousY
-        val coarseStep = if (max(width, height) <= 100) 2 else 3
+        val coarseStep = when {
+            fullFrameRecovery -> 5
+            max(width, height) <= 100 -> 2
+            else -> 3
+        }
 
         var bestScore = -1f
         var bestVisualScore = 0f
