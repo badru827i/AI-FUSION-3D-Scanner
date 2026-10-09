@@ -402,8 +402,8 @@ class MainActivity : ComponentActivity() {
                 latestDepthHeight = result.height
                 latestDepthElapsedMs = SystemClock.elapsedRealtime()
             }
-            outputBitmap = depthToBitmap(stableDepth, result.width, result.height)
-            val depthPreview = outputBitmap
+            val depthPreview = depthToBitmap(stableDepth, result.width, result.height)
+            outputBitmap = depthPreview
             runOnUiThread {
                 if (scanning && !isDestroyed) {
                     coverage.update(snapshot)
