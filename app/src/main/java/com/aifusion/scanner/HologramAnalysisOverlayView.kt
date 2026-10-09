@@ -88,6 +88,32 @@ class HologramAnalysisOverlayView @JvmOverloads constructor(
         super.onDraw(canvas)
         if (!active || width <= 0 || height <= 0) return
 
+        // A low-cost full-frame grid communicates that analysis spans the camera view;
+        // target-local brackets below identify the region currently used for lock tracking.
+        paint.style = Paint.Style.STROKE
+        paint.strokeWidth = 0.65f * resources.displayMetrics.density
+        paint.color = 0x2250DFFF
+        val gridStep = (32f * resources.displayMetrics.density).coerceAtLeast(24f)
+        var gx = 0f
+        while (gx < width) {
+            canvas.drawLine(gx, 0f, gx, height.toFloat(), paint)
+            gx += gridStep
+        }
+        var gy = 0f
+        while (gy < height) {
+            canvas.drawLine(0f, gy, width.toFloat(), gy, paint)
+            gy += gridStep
+        }
+        paint.style = Paint.Style.FILL
+        paint.textSize = 9f * resources.displayMetrics.density
+        paint.color = 0x9970F5FF.toInt()
+        canvas.drawText(
+            if (targetSelected) "FULL FRAME ANALYSIS • TARGET LOCK" else "FULL FRAME ANALYSIS",
+            10f * resources.displayMetrics.density,
+            height - 12f * resources.displayMetrics.density,
+            paint
+        )
+
         val cx = targetX * width
         val cy = targetY * height
         val boxW = width * targetW
