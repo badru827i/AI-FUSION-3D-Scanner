@@ -14,6 +14,7 @@ import android.os.Looper
 import android.widget.Button
 import android.widget.TextView
 import android.widget.Toast
+import android.util.Size
 import androidx.activity.ComponentActivity
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
@@ -113,6 +114,7 @@ class MainActivity : ComponentActivity() {
                 .setJpegQuality(if (profile.mode == ScanMode.LOW_RAM) 65 else 85)
                 .build()
             imageAnalysis = ImageAnalysis.Builder()
+                .setTargetResolution(if (profile.mode == ScanMode.LOW_RAM) Size(480, 360) else Size(640, 480))
                 .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                 .setImageQueueDepth(1)
                 .build()
