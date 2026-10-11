@@ -623,7 +623,7 @@ class MainActivity : ComponentActivity() {
         val bytes = out.toByteArray()
         val opts = BitmapFactory.Options().apply {
             inSampleSize = when (profile.mode) {
-                ScanMode.LOW_RAM -> 8
+                ScanMode.LOW_RAM -> 4
                 ScanMode.BALANCED -> 4
                 ScanMode.PERFORMANCE -> 2
             }
