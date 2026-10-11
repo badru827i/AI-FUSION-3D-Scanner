@@ -683,7 +683,7 @@ class MainActivity : ComponentActivity() {
         scanSession.updateRuntimeSettings(adaptiveScan.settings())
         exportExecutor.execute {
             try {
-                val result = scanSession.buildResult(savedFrameCount)
+                val result = scanSession.buildResult(savedFrameCount, scanDataRouter.latest()?.mesh)
                 runOnUiThread {
                     if (isFinishing || isDestroyed) return@runOnUiThread
                     saveModelButton.isEnabled = true
