@@ -322,7 +322,11 @@ class MainActivity : ComponentActivity() {
             return
         }
         val snapshot = tracker.snapshot()
-        if (snapshot.quality == "TOO_FAST") {
+        val turntableMode = getSharedPreferences("turntable_scan", MODE_PRIVATE)
+            .getBoolean("enabled", false)
+        // A fixed phone sees the object move on a turntable; that motion is expected,
+        // so don't reject these frames using the handheld-camera motion heuristic.
+        if (snapshot.quality == "TOO_FAST" && !turntableMode) {
             file.delete()
             scanStatus.text = "Move slower • frame skipped • tracking"
             return
