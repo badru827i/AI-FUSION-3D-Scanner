@@ -55,6 +55,8 @@ class MainActivity : ComponentActivity() {
     private lateinit var trackingOverlay: TrackingOverlayView
     private lateinit var hologramOverlay: HologramAnalysisOverlayView
     private val objectTracker = ObjectTracker()
+    // One shared snapshot feeds preview, tracking metadata, mesh topology and export.
+    private val scanDataRouter = UnifiedScanDataRouter()
     @Volatile private var pendingTargetX: Float? = null
     @Volatile private var pendingTargetY: Float? = null
     private lateinit var coverageText: TextView
@@ -238,6 +240,7 @@ class MainActivity : ComponentActivity() {
         lastTrackMs = 0L
         lastPreviewMs = 0L
         consecutiveCaptureErrors = 0
+        scanDataRouter.clear()
         synchronized(depthLock) {
             latestDepthData = null
             latestDepthWidth = 0
@@ -314,13 +317,12 @@ class MainActivity : ComponentActivity() {
         val frameIndex = frameCount
         scanSession.recordFrame(file)
         scanSession.recordTracking(frameIndex, snapshot)
-        val depthSnapshot = synchronized(depthLock) {
-            val data = latestDepthData
-            if (data != null && latestDepthElapsedMs > 0L &&
-                SystemClock.elapsedRealtime() - latestDepthElapsedMs <= 4000L) {
-                Triple(data.copyOf(), latestDepthWidth, latestDepthHeight)
-            } else null
-        }
+        scanDataRouter.publishTracking(snapshot)
+        val unifiedSnapshot = scanDataRouter.latest()
+        val depthSnapshot = if (unifiedSnapshot != null &&
+            SystemClock.elapsedRealtime() - unifiedSnapshot.timestampMs <= 4000L) {
+            Triple(unifiedSnapshot.depth.copyOf(), unifiedSnapshot.width, unifiedSnapshot.height)
+        } else null
         var depthSaved = false
         var depthSaveError: String? = null
         if (depthSnapshot != null) {
@@ -471,11 +473,15 @@ class MainActivity : ComponentActivity() {
                     snapshot.quality
                 )
             }
-            if (scanning) synchronized(depthLock) {
-                latestDepthData = stableDepth.copyOf()
-                latestDepthWidth = result.width
-                latestDepthHeight = result.height
-                latestDepthElapsedMs = SystemClock.elapsedRealtime()
+            if (scanning) {
+                val nowMs = SystemClock.elapsedRealtime()
+                scanDataRouter.publishDepth(stableDepth, result.width, result.height, nowMs)
+                synchronized(depthLock) {
+                    latestDepthData = stableDepth.copyOf()
+                    latestDepthWidth = result.width
+                    latestDepthHeight = result.height
+                    latestDepthElapsedMs = nowMs
+                }
             }
             val depthPreview = depthToBitmap(stableDepth, result.width, result.height)
             outputBitmap = depthPreview
