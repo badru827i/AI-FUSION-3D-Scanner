@@ -94,7 +94,7 @@ class MainActivity : ComponentActivity() {
         setContentView(R.layout.activity_main)
 
         // One floating control button keeps the camera view uncluttered.
-        val controlsPanel = findViewById<View>(R.id.controlsPanel)
+        val controlsPanel = findViewById<android.widget.LinearLayout>(R.id.controlsPanel)
         val scanMenuButton = findViewById<Button>(R.id.scanMenuButton)
         var controlsExpanded = false
         controlsPanel.alpha = 0f
