@@ -47,7 +47,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var startButton: Button
     private lateinit var scanModeButton: Button
     private lateinit var adaptiveScan: AdaptiveScanController
-    private lateinit var trackingLockButton
+    private lateinit var trackingLockButton: Button
     private lateinit var miniPreview: Scan3DPreviewView
     private lateinit var trackingOverlay: TrackingOverlayView
     private lateinit var hologramOverlay: HologramAnalysisOverlayView
