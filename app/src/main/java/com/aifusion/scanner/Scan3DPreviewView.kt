@@ -52,6 +52,7 @@ class Scan3DPreviewView @JvmOverloads constructor(
     private var pitch = 0.62f
     private var zoom = 1f
     private var lowPower = false
+    private var scanIntent = ScanIntent.AUTO
     private var aiDepth = false
     private var focusX = 0.5f
     private var focusY = 0.5f
@@ -66,6 +67,11 @@ class Scan3DPreviewView @JvmOverloads constructor(
 
     fun setLowPowerMode(enabled: Boolean) {
         lowPower = enabled
+        invalidate()
+    }
+
+    fun setScanIntent(intent: ScanIntent) {
+        scanIntent = intent
         invalidate()
     }
 
@@ -241,10 +247,19 @@ class Scan3DPreviewView @JvmOverloads constructor(
         val divisions = if (lowPower) 16 else 32
         val rows = divisions + 1
         val cols = divisions + 1
-        val regionW = if (focusLocked) 0.68f else 0.90f
-        val regionH = if (focusLocked) 0.68f else 0.90f
-        val regionLeft = (focusX - regionW / 2f).coerceIn(0f, 1f - regionW)
-        val regionTop = (focusY - regionH / 2f).coerceIn(0f, 1f - regionH)
+        val canFocusCrop = focusLocked && scanIntent != ScanIntent.LARGE_COVERAGE
+        val regionW = when (scanIntent) {
+            ScanIntent.AUTO -> if (canFocusCrop) 0.68f else 0.90f
+            ScanIntent.SMALL_DETAIL -> if (canFocusCrop) 0.52f else 0.72f
+            ScanIntent.LARGE_COVERAGE -> 1.0f
+        }
+        val regionH = when (scanIntent) {
+            ScanIntent.AUTO -> if (canFocusCrop) 0.68f else 0.90f
+            ScanIntent.SMALL_DETAIL -> if (canFocusCrop) 0.52f else 0.72f
+            ScanIntent.LARGE_COVERAGE -> 1.0f
+        }
+        val regionLeft = if (regionW >= 1f) 0f else (focusX - regionW / 2f).coerceIn(0f, 1f - regionW)
+        val regionTop = if (regionH >= 1f) 0f else (focusY - regionH / 2f).coerceIn(0f, 1f - regionH)
         val cy = cos(yaw)
         val sy = sin(yaw)
         val cp = cos(pitch)
@@ -387,6 +402,9 @@ class Scan3DPreviewView @JvmOverloads constructor(
         val title = when {
             !aiDepth -> "3D SURFACE PREVIEW"
             !live -> "3D RELIEF • RELATIVE DEPTH"
+            scanIntent == ScanIntent.LARGE_COVERAGE -> "LIVE MODEL • FULL FRAME"
+            scanIntent == ScanIntent.SMALL_DETAIL && focusLocked && trackingFound -> "LIVE MODEL • DETAIL LOCKED"
+            scanIntent == ScanIntent.SMALL_DETAIL && focusLocked -> "LIVE MODEL • REACQUIRING"
             focusLocked && trackingFound -> "LIVE MODEL • TARGET LOCKED"
             focusLocked -> "LIVE MODEL • REACQUIRING"
             else -> "LIVE MODEL • AI DEPTH"
