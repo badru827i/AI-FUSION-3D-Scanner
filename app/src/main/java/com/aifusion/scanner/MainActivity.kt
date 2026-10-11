@@ -106,7 +106,7 @@ class MainActivity : ComponentActivity() {
             meshModeButton.text = if (polygonMeshEnabled) "Mesh: POLYGON" else "Mesh: SOLID"
         }
         miniPreview.setPolygonMode(polygonMeshEnabled)
-        saveModelButton.setOnClickListener { saveCurrentModel() }
+        saveModelButton.setOnClickListener { saveCurrentModel() }\n        findViewById<Button>(R.id.completedModels).setOnClickListener {\n            startActivity(android.content.Intent(this, CompletedModelsActivity::class.java))\n        }
         scanModeButton = findViewById(R.id.scanMode)
         trackingLockButton = findViewById(R.id.trackingLock)
         trackingLockButton.setOnClickListener {
