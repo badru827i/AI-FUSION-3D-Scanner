@@ -683,6 +683,7 @@ class MainActivity : ComponentActivity() {
         scanStatus.text = "Saved " + frameCount + " frames • building depth mesh…"
         val savedFrameCount = frameCount
         val savedCoverage = coverage.percent()
+        scanSession.updateRuntimeSettings(adaptiveScan.settings())
         exportExecutor.execute {
             try {
                 val result = scanSession.buildResult(savedFrameCount)
