@@ -52,6 +52,7 @@ class Scan3DPreviewView @JvmOverloads constructor(
     private var pitch = 0.62f
     private var zoom = 1f
     private var lowPower = false
+    private var polygonMode = true
     private var scanIntent = ScanIntent.AUTO
     private var aiDepth = false
     private var focusX = 0.5f
@@ -64,6 +65,11 @@ class Scan3DPreviewView @JvmOverloads constructor(
     private var lastTouchY = 0f
     private var pinchStartDistance = 0f
     private var pinchStartZoom = 1f
+
+    fun setPolygonMode(enabled: Boolean) {
+        polygonMode = enabled
+        invalidate()
+    }
 
     fun setLowPowerMode(enabled: Boolean) {
         lowPower = enabled
@@ -319,12 +325,13 @@ class Scan3DPreviewView @JvmOverloads constructor(
         }
 
         // Draw subtle surface wires after the faces for readable form and depth changes.
+        if (polygonMode) {
         paint.style = Paint.Style.STROKE
-        paint.strokeWidth = if (lowPower) 0.7f else 0.85f
+        paint.strokeWidth = if (lowPower) 0.9f else 1.15f
         for (gy in 0 until rows) {
             for (gx in 0 until cols) {
                 val p = vertices[gy][gx] ?: continue
-                paint.color = if (p.depth > 0.58f) 0xA96EF2FF.toInt() else 0x8B55D6C7.toInt()
+                paint.color = if (p.depth > 0.58f) 0xE66EF2FF.toInt() else 0xC955D6C7.toInt()
                 if (gx + 1 < cols) {
                     val q = vertices[gy][gx + 1] ?: continue
                     canvas.drawLine(p.screenX, p.screenY, q.screenX, q.screenY, paint)
@@ -334,6 +341,7 @@ class Scan3DPreviewView @JvmOverloads constructor(
                     canvas.drawLine(p.screenX, p.screenY, q.screenX, q.screenY, paint)
                 }
             }
+        }
         }
     }
 
@@ -412,7 +420,9 @@ class Scan3DPreviewView @JvmOverloads constructor(
         canvas.drawText(title, 10f, 17f * density, paint)
         paint.color = 0xCCBDEFFF.toInt()
         paint.textSize = 9f * density
-        canvas.drawText("Drag: rotate  •  Pinch: zoom", 10f, 31f * density, paint)
+        canvas.drawText("Drag: rotate • Pinch: zoom", 10f, 31f * density, paint)
+        paint.color = if (polygonMode) 0xFF7AF0B0.toInt() else 0xFFBDEFFF.toInt()
+        canvas.drawText(if (polygonMode) "TRIANGLE POLYGON MESH" else "SOLID SURFACE", 10f, 44f * density, paint)
         if (focusLocked) {
             paint.color = if (trackingFound) 0xFF7AF0B0.toInt() else 0xFFFFD36A.toInt()
             canvas.drawText(
