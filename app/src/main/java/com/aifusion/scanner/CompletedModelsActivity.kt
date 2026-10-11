@@ -47,6 +47,12 @@ class CompletedModelsActivity : Activity() {
         page.addView(Button(this).apply { text = "Back"; setOnClickListener { finish() } })
         setContentView(page)
         showGallery()
+        // A freshly completed scan can open straight into its finished preview.
+        val requestedModel = intent.getStringExtra("model_name")
+        if (!requestedModel.isNullOrBlank()) {
+            val dir = File(root, requestedModel)
+            if (dir.isDirectory && File(dir, "$requestedModel.obj").isFile) showPreview(dir)
+        }
     }
 
     private fun showGallery() {
