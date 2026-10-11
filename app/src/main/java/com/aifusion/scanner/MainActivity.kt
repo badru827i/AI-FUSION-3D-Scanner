@@ -496,7 +496,8 @@ class MainActivity : ComponentActivity() {
                 if (scanning && !isDestroyed) {
                     coverage.update(snapshot)
                     miniPreview.setDepthPreview(
-                        depthPreview, coverage, track.x, track.y, objectLockActive, track.tracked
+                        depthPreview, coverage, track.x, track.y, objectLockActive, track.tracked,
+                        scanDataRouter.latest()?.mesh
                     )
                     coverageText.visibility = View.VISIBLE
                     coverageText.text = coverage.percent().toString() + "% covered • AI depth • " + result.inferenceMs + "ms"
