@@ -47,6 +47,7 @@ class Scan3DPreviewView @JvmOverloads constructor(
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val facePath = Path()
     private var bitmap: Bitmap? = null
+    private var routedMesh: PolygonMeshData? = null
     private var coverage: ScanCoverage? = null
     private var yaw = -0.30f
     private var pitch = 0.62f
@@ -98,9 +99,11 @@ class Scan3DPreviewView @JvmOverloads constructor(
         targetX: Float = 0.5f,
         targetY: Float = 0.5f,
         targetLocked: Boolean = false,
-        targetTracking: Boolean = true
+        targetTracking: Boolean = true,
+        sharedMesh: PolygonMeshData? = null
     ) {
         replaceBitmap(value)
+        routedMesh = sharedMesh
         coverage = scanCoverage
         aiDepth = true
         live = true
@@ -130,6 +133,7 @@ class Scan3DPreviewView @JvmOverloads constructor(
     fun clear() {
         val previous = bitmap
         bitmap = null
+        routedMesh = null
         if (previous != null && !previous.isRecycled) previous.recycle()
         coverage = null
         yaw = -0.30f
@@ -238,7 +242,12 @@ class Scan3DPreviewView @JvmOverloads constructor(
 
         val image = bitmap
         if (image != null && !image.isRecycled && image.width > 1 && image.height > 1) {
-            drawSurfaceMesh(canvas, image, w, h)
+            val shared = routedMesh
+            if (shared != null && shared.vertexCount > 0 && shared.triangleIndices.isNotEmpty()) {
+                drawRoutedSurfaceMesh(canvas, shared, w, h)
+            } else {
+                drawSurfaceMesh(canvas, image, w, h)
+            }
         } else {
             paint.color = 0xCCFFFFFF.toInt()
             paint.textSize = 12f * resources.displayMetrics.density
@@ -345,6 +354,62 @@ class Scan3DPreviewView @JvmOverloads constructor(
         }
     }
 
+    /** Render the exact polygon topology produced by UnifiedScanDataRouter. */
+    private fun drawRoutedSurfaceMesh(canvas: Canvas, mesh: PolygonMeshData, w: Float, h: Float) {
+        val cy = cos(yaw); val sy = sin(yaw); val cp = cos(pitch); val sp = sin(pitch)
+        val scale = min(w, h) * 0.34f * zoom
+        val cameraDistance = 2.65f
+        val vertices = arrayOfNulls<Vertex>(mesh.vertexCount)
+        var i = 0; var index = 0
+        while (i + 2 < mesh.vertices.size && index < vertices.size) {
+            val u = mesh.vertices[i].coerceIn(0f, 1f)
+            val v = mesh.vertices[i + 1].coerceIn(0f, 1f)
+            val depth = mesh.vertices[i + 2].coerceIn(0f, 1f)
+            val x = (u - 0.5f) * 2f; val y = (v - 0.5f) * 2f
+            val z = (depth - 0.5f) * if (aiDepth) 0.96f else 0.65f
+            val rx = x * cy + z * sy; val rz = -x * sy + z * cy
+            val ry = y * cp - rz * sp; val cameraZ = y * sp + rz * cp
+            val perspective = cameraDistance / (cameraDistance - cameraZ).coerceAtLeast(1.25f)
+            vertices[index++] = Vertex(rx, ry, cameraZ, depth, w / 2f + rx * scale * perspective, h / 2f + ry * scale * perspective)
+            i += 3
+        }
+        val faces = ArrayList<Face>(mesh.triangleCount)
+        var t = 0
+        while (t + 2 < mesh.triangleIndices.size) {
+            val a = vertices.getOrNull(mesh.triangleIndices[t])
+            val b = vertices.getOrNull(mesh.triangleIndices[t + 1])
+            val d = vertices.getOrNull(mesh.triangleIndices[t + 2])
+            if (a != null && b != null && d != null) faces.add(createFace(a, b, d))
+            t += 3
+        }
+        faces.sortBy { it.averageZ }
+        paint.style = Paint.Style.FILL
+        for (face in faces) {
+            facePath.reset(); facePath.moveTo(face.a.screenX, face.a.screenY)
+            facePath.lineTo(face.b.screenX, face.b.screenY); facePath.lineTo(face.c.screenX, face.c.screenY); facePath.close()
+            paint.color = face.color; canvas.drawPath(facePath, paint)
+        }
+        if (polygonMode) {
+            paint.style = Paint.Style.STROKE; paint.strokeWidth = if (lowPower) 0.9f else 1.1f
+            val drawnEdges = HashSet<Long>(mesh.triangleIndices.size)
+            t = 0
+            while (t + 2 < mesh.triangleIndices.size) {
+                val a = mesh.triangleIndices[t]; val b = mesh.triangleIndices[t + 1]; val d = mesh.triangleIndices[t + 2]
+                drawMeshEdge(canvas, vertices, a, b, drawnEdges); drawMeshEdge(canvas, vertices, b, d, drawnEdges); drawMeshEdge(canvas, vertices, d, a, drawnEdges)
+                t += 3
+            }
+        }
+    }
+
+    private fun drawMeshEdge(canvas: Canvas, vertices: Array<Vertex?>, from: Int, to: Int, drawnEdges: MutableSet<Long>) {
+        if (from !in vertices.indices || to !in vertices.indices) return
+        val low = min(from, to); val high = max(from, to)
+        val key = (low.toLong() shl 32) or (high.toLong() and 0xffffffffL)
+        if (!drawnEdges.add(key)) return
+        val a = vertices[from] ?: return; val b = vertices[to] ?: return
+        paint.color = if ((a.depth + b.depth) * 0.5f > 0.58f) 0xE66EF2FF.toInt() else 0xC955D6C7.toInt()
+        canvas.drawLine(a.screenX, a.screenY, b.screenX, b.screenY, paint)
+    }
     private fun smoothDepth(image: Bitmap, x: Int, y: Int): Float {
         fun value(px: Int, py: Int): Float {
             val color = image.getPixel(px.coerceIn(0, image.width - 1), py.coerceIn(0, image.height - 1))
