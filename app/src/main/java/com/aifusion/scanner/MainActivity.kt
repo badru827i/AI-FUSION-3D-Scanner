@@ -773,6 +773,7 @@ class MainActivity : ComponentActivity() {
                     scanStatus.text = adaptiveScan.statusLabel() + " • depth mesh exported • " + savedFrameCount +
                         " frames • " + savedCoverage + "% guide coverage • OBJ + GLB"
                     Toast.makeText(this, "Saved: " + result.name, Toast.LENGTH_LONG).show()
+                    startActivity(android.content.Intent(this, CompletedModelsActivity::class.java).putExtra("model_name", result.name))
                 }
             } catch (t: Throwable) {
                 runOnUiThread {
