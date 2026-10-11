@@ -5,6 +5,7 @@ import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.ImageFormat
+import android.graphics.Matrix
 import android.graphics.Rect
 import android.graphics.YuvImage
 import android.os.Bundle
@@ -15,14 +16,20 @@ import android.widget.Button
 import android.widget.TextView
 import android.widget.Toast
 import android.util.Size
+import android.hardware.camera2.CaptureRequest
+import android.util.Range
 import android.view.View
 import androidx.activity.ComponentActivity
+import androidx.camera.camera2.interop.Camera2Interop
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
+import androidx.camera.core.resolutionselector.AspectRatioStrategy
+import androidx.camera.core.resolutionselector.ResolutionSelector
+import androidx.camera.core.resolutionselector.ResolutionStrategy
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.core.app.ActivityCompat
@@ -31,17 +38,25 @@ import java.io.ByteArrayOutputStream
 import java.io.File
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
 
 class MainActivity : ComponentActivity() {
     private lateinit var previewView: PreviewView
     private lateinit var deviceStatus: TextView
     private lateinit var scanStatus: TextView
     private lateinit var startButton: Button
+    private lateinit var saveModelButton: Button
+    private lateinit var meshModeButton: Button
+    private var polygonMeshEnabled = true
+    private lateinit var scanModeButton: Button
+    private lateinit var adaptiveScan: AdaptiveScanController
     private lateinit var trackingLockButton: Button
     private lateinit var miniPreview: Scan3DPreviewView
     private lateinit var trackingOverlay: TrackingOverlayView
     private lateinit var hologramOverlay: HologramAnalysisOverlayView
     private val objectTracker = ObjectTracker()
+    // One shared snapshot feeds preview, tracking metadata, mesh topology and export.
+    private val scanDataRouter = UnifiedScanDataRouter()
     @Volatile private var pendingTargetX: Float? = null
     @Volatile private var pendingTargetY: Float? = null
     private lateinit var coverageText: TextView
@@ -49,14 +64,19 @@ class MainActivity : ComponentActivity() {
     private lateinit var imageCapture: ImageCapture
     private lateinit var imageAnalysis: ImageAnalysis
     private val previewHandler = Handler(Looper.getMainLooper())
+    // Keep camera tracking responsive while the heavier depth model runs independently.
     private val aiExecutor: ExecutorService = Executors.newSingleThreadExecutor()
+    private val depthExecutor: ExecutorService = Executors.newSingleThreadExecutor()
+    private val depthInFlight = AtomicBoolean(false)
+    private var lastTrackMs = 0L
     private var lastPreviewMs = 0L
     private lateinit var tracker: CameraTracking
     private lateinit var coverage: ScanCoverage
     private lateinit var scanSession: ScanSession
     private lateinit var depthAi: DepthAiEngine
     private val temporalDepth = TemporalDepthFilter()
-    private var scanning = false
+    private val temporalDepthLock = Any()
+    @Volatile private var scanning = false
     private var frameCount = 0
     @Volatile private var captureInFlight = false
     private var finishRequested = false
@@ -76,6 +96,17 @@ class MainActivity : ComponentActivity() {
         deviceStatus = findViewById(R.id.deviceStatus)
         scanStatus = findViewById(R.id.scanStatus)
         startButton = findViewById(R.id.startScan)
+        saveModelButton = findViewById(R.id.saveModel)
+        meshModeButton = findViewById(R.id.meshMode)
+        meshModeButton.text = "Mesh: POLYGON"
+        meshModeButton.setOnClickListener {
+            polygonMeshEnabled = !polygonMeshEnabled
+            miniPreview.setPolygonMode(polygonMeshEnabled)
+            meshModeButton.text = if (polygonMeshEnabled) "Mesh: POLYGON" else "Mesh: SOLID"
+        }
+        miniPreview.setPolygonMode(polygonMeshEnabled)
+        saveModelButton.setOnClickListener { saveCurrentModel() }
+        scanModeButton = findViewById(R.id.scanMode)
         trackingLockButton = findViewById(R.id.trackingLock)
         trackingLockButton.setOnClickListener {
             if (objectTracker.isActive()) {
@@ -102,11 +133,28 @@ class MainActivity : ComponentActivity() {
         coverageText.visibility = View.GONE
 
         profile = SmartDeviceEngine.detect(this)
+        adaptiveScan = AdaptiveScanController(profile)
+        scanModeButton.text = "Scan: " + adaptiveScan.statusLabel()
+        scanModeButton.setOnClickListener {
+            if (scanning || reconstructing) {
+                Toast.makeText(this, "Finish the current scan before changing mode", Toast.LENGTH_SHORT).show()
+            } else {
+                adaptiveScan.cycleIntent()
+                miniPreview.setScanIntent(adaptiveScan.selectedIntent)
+                scanModeButton.text = "Scan: " + adaptiveScan.statusLabel()
+                scanStatus.text = adaptiveScan.statusLabel() + " selected • local adaptive scanning"
+                if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+                    startCamera()
+                }
+            }
+        }
+        miniPreview.setScanIntent(adaptiveScan.selectedIntent)
         tracker = CameraTracking(this, profile)
         coverage = ScanCoverage()
         scanSession = ScanSession(this, profile)
         depthAi = DepthAiEngine(this, profile)
         hologramOverlay.setLowPowerMode(profile.mode == ScanMode.LOW_RAM)
+        miniPreview.setLowPowerMode(profile.mode == ScanMode.LOW_RAM)
 
         deviceStatus.text = "AI-FUSION • " + SmartDeviceEngine.summary(profile) + " • Depth AI " + depthAi.backend
         startButton.setOnClickListener { if (!scanning) startScan() else finishScan() }
@@ -128,13 +176,41 @@ class MainActivity : ComponentActivity() {
         val future = ProcessCameraProvider.getInstance(this)
         future.addListener({
             val provider = future.get()
-            val preview = Preview.Builder().build().also { it.surfaceProvider = previewView.surfaceProvider }
-            imageCapture = ImageCapture.Builder()
-                .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
-                .setJpegQuality(if (profile.mode == ScanMode.LOW_RAM) 65 else 85)
+            // Request a 16:9 Full-HD camera stream when the device supports it.
+            // CameraX selects a compatible fallback on entry-level cameras.
+            val fhdSelector = ResolutionSelector.Builder()
+                .setAspectRatioStrategy(AspectRatioStrategy.RATIO_16_9_FALLBACK_AUTO_STRATEGY)
+                .setResolutionStrategy(
+                    ResolutionStrategy(
+                        Size(1920, 1080),
+                        ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER
+                    )
+                )
                 .build()
+            val previewBuilder = Preview.Builder()
+                .setResolutionSelector(fhdSelector)
+            // Best-effort 30 FPS request; the camera HAL may choose a supported range instead.
+            Camera2Interop.Extender(previewBuilder).setCaptureRequestOption(
+                CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE,
+                Range(30, 30)
+            )
+            val preview = previewBuilder.build().also {
+                it.surfaceProvider = previewView.surfaceProvider
+            }
+            imageCapture = ImageCapture.Builder()
+                .setResolutionSelector(fhdSelector)
+                .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
+                .setJpegQuality(adaptiveScan.settings().jpegQuality)
+                .build()
+            // Keep AI analysis intentionally smaller so FHD preview does not overload RAM/CPU.
             imageAnalysis = ImageAnalysis.Builder()
-                .setTargetResolution(if (profile.mode == ScanMode.LOW_RAM) Size(480, 360) else Size(640, 480))
+                .setTargetResolution(
+                    if (profile.mode == ScanMode.LOW_RAM || adaptiveScan.selectedIntent == ScanIntent.LARGE_COVERAGE) {
+                        Size(640, 360)
+                    } else {
+                        Size(960, 540)
+                    }
+                )
                 .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                 .setImageQueueDepth(1)
                 .build()
@@ -143,14 +219,16 @@ class MainActivity : ComponentActivity() {
                 }
             provider.unbindAll()
             provider.bindToLifecycle(this, CameraSelector.DEFAULT_BACK_CAMERA, preview, imageCapture, imageAnalysis)
-            scanStatus.text = "Camera ready • point at the object"
+            scanStatus.text = "Camera ready • " + adaptiveScan.statusLabel() + " mode • point at the object"
         }, ContextCompat.getMainExecutor(this))
     }
 
     private fun startScan() {
         if (reconstructing || captureInFlight) return
+        adaptiveScan.beginScan()
+        val scanSettings = adaptiveScan.settings()
         try {
-            scanSession.start()
+            scanSession.start(scanSettings)
         } catch (t: Throwable) {
             scanStatus.text = "Cannot start scan: " + (t.message ?: "storage unavailable")
             return
@@ -159,8 +237,10 @@ class MainActivity : ComponentActivity() {
         hologramOverlay.setActive(true)
         finishRequested = false
         frameCount = 0
+        lastTrackMs = 0L
         lastPreviewMs = 0L
         consecutiveCaptureErrors = 0
+        scanDataRouter.clear()
         synchronized(depthLock) {
             latestDepthData = null
             latestDepthWidth = 0
@@ -174,11 +254,11 @@ class MainActivity : ComponentActivity() {
         objectTracker.clear()
         trackingOverlay.clearTarget()
         trackingLockButton.text = "Lock Target"
-        temporalDepth.reset()
+        synchronized(temporalDepthLock) { temporalDepth.reset() }
         startButton.isEnabled = true
         startButton.text = "Stop 3D Scan"
         coverageText.text = "0% covered • LIVE"
-        scanStatus.text = "AI Depth " + depthAi.backend + " • tap object to lock • frames: 0"
+        scanStatus.text = adaptiveScan.statusLabel() + " • AI Depth " + depthAi.backend + " • tap object to lock • frames: 0"
         captureFrame()
     }
 
@@ -205,8 +285,7 @@ class MainActivity : ComponentActivity() {
                         }
                         recordCapturedFrame(file)
                         if (scanning) {
-                            val delay = if (profile.mode == ScanMode.LOW_RAM) 1200L else 850L
-                            previewHandler.postDelayed({ captureFrame() }, delay)
+                            previewHandler.postDelayed({ captureFrame() }, adaptiveScan.settings().captureIntervalMs)
                         }
                     }
 
@@ -238,13 +317,12 @@ class MainActivity : ComponentActivity() {
         val frameIndex = frameCount
         scanSession.recordFrame(file)
         scanSession.recordTracking(frameIndex, snapshot)
-        val depthSnapshot = synchronized(depthLock) {
-            val data = latestDepthData
-            if (data != null && latestDepthElapsedMs > 0L &&
-                SystemClock.elapsedRealtime() - latestDepthElapsedMs <= 4000L) {
-                Triple(data.copyOf(), latestDepthWidth, latestDepthHeight)
-            } else null
-        }
+        scanDataRouter.publishTracking(snapshot)
+        val unifiedSnapshot = scanDataRouter.latest()
+        val depthSnapshot = if (unifiedSnapshot != null &&
+            SystemClock.elapsedRealtime() - unifiedSnapshot.timestampMs <= 4000L) {
+            Triple(unifiedSnapshot.depth.copyOf(), unifiedSnapshot.width, unifiedSnapshot.height)
+        } else null
         var depthSaved = false
         var depthSaveError: String? = null
         if (depthSnapshot != null) {
@@ -291,13 +369,20 @@ class MainActivity : ComponentActivity() {
             image.close()
             return
         }
-        val now = System.currentTimeMillis()
-        val interval = if (profile.mode == ScanMode.LOW_RAM) 900L else 500L
-        if (now - lastPreviewMs < interval) {
+
+        val now = SystemClock.elapsedRealtime()
+        val trackingInterval = when (profile.mode) {
+            ScanMode.LOW_RAM -> 260L
+            ScanMode.BALANCED -> 100L
+            ScanMode.PERFORMANCE -> 66L
+        }
+        val hasPendingTarget = pendingTargetX != null && pendingTargetY != null
+        if (!hasPendingTarget && now - lastTrackMs < trackingInterval) {
             image.close()
             return
         }
-        lastPreviewMs = now
+        lastTrackMs = now
+
         val bitmap = imageToBitmap(image)
         image.close()
         if (bitmap == null) return
@@ -305,72 +390,145 @@ class MainActivity : ComponentActivity() {
         val requestX = pendingTargetX
         val requestY = pendingTargetY
         if (requestX != null && requestY != null) {
-            objectTracker.lock(bitmap, requestX, requestY)
+            // PreviewView uses FILL_CENTER, so undo its centre crop before locking a pixel patch.
+            val framePoint = viewToFramePoint(requestX, requestY, bitmap)
+            objectTracker.lock(bitmap, framePoint.first, framePoint.second)
             pendingTargetX = null
             pendingTargetY = null
             runOnUiThread {
                 if (scanning && objectTracker.isActive()) {
                     trackingLockButton.text = "Unlock Target"
-                    scanStatus.text = "Object locked • stable tracking + AI depth"
+                    scanStatus.text = "Object locked • smoothing tracking"
                 } else if (scanning) {
                     trackingLockButton.text = "Lock Target"
                     scanStatus.text = "Target not lockable • tap a clearer feature"
                 }
             }
         }
-        val track = objectTracker.update(bitmap)
+
+        // Tracking is updated on its own cadence and no longer waits for AI-depth inference.
+        val snapshot = tracker.snapshot()
+        // Route live tracking immediately, not only when a still frame is captured.
+        scanDataRouter.publishTracking(snapshot)
+        val track = objectTracker.update(bitmap, snapshot.motion)
         val objectLockActive = objectTracker.isActive()
-        runOnUiThread { if (scanning) hologramOverlay.updateTarget(track.x, track.y, track.tracked) }
+        val displayTarget = frameToViewTarget(track.x, track.y, track.width, track.height, bitmap)
         runOnUiThread {
-            if (scanning && track.tracked) {
-                trackingOverlay.setTarget(track.x, track.y, active = true)
-            } else if (scanning && objectTracker.isActive()) {
+            if (!scanning) return@runOnUiThread
+            hologramOverlay.updateTarget(
+                displayTarget.x, displayTarget.y, track.tracked,
+                displayTarget.width, displayTarget.height, objectLockActive
+            )
+            if (track.tracked) {
+                trackingOverlay.setTarget(
+                    displayTarget.x, displayTarget.y,
+                    width = displayTarget.width.coerceIn(0.08f, 0.65f),
+                    height = displayTarget.height.coerceIn(0.08f, 0.65f),
+                    active = true
+                )
+            } else if (objectLockActive) {
                 trackingOverlay.setTracking(false)
             }
         }
 
-        val snapshot = tracker.snapshot()
         if (snapshot.quality == "TOO_FAST") {
             bitmap.recycle()
             runOnUiThread {
-                if (scanning) scanStatus.text = "Move slower • AI depth paused • tracking"
+                if (scanning) scanStatus.text = "Move slower • AI depth paused • tracking continues"
             }
             return
         }
 
-        try {
-            val result = depthAi.estimate(bitmap)
-            val stableDepth = temporalDepth.filter(
-                result.depth,
-                result.width,
-                result.height,
-                snapshot.motion,
-                snapshot.quality
-            )
-            if (scanning) synchronized(depthLock) {
-                latestDepthData = stableDepth.copyOf()
-                latestDepthWidth = result.width
-                latestDepthHeight = result.height
-                latestDepthElapsedMs = SystemClock.elapsedRealtime()
-            }
-            val depthBitmap = depthToBitmap(stableDepth, result.width, result.height)
+        // Depth is intentionally less frequent; it must not block the tracking updates above.
+        val depthInterval = adaptiveScan.settings().depthIntervalMs
+        if (now - lastPreviewMs < depthInterval || !depthInFlight.compareAndSet(false, true)) {
             bitmap.recycle()
-            runOnUiThread {
-                if (scanning) {
-                    coverage.update(snapshot)
-                    miniPreview.setDepthPreview(depthBitmap, coverage, track.x, track.y, objectLockActive, track.tracked)
-                    coverageText.visibility = View.VISIBLE
-                    coverageText.text = coverage.percent().toString() + "% covered • AI depth • " + result.inferenceMs + "ms"
-                    scanStatus.text = "AI Depth " + result.backend + " • " + result.inferenceMs + "ms • DEPTH PREVIEW"
-                } else {
-                    depthBitmap.recycle()
-                }
+            return
+        }
+        lastPreviewMs = now
+        try {
+            depthExecutor.execute {
+                processDepthFrame(bitmap, snapshot, track, objectLockActive)
             }
         } catch (t: Throwable) {
-            bitmap.recycle()
-            runOnUiThread {
-                if (scanning) scanStatus.text = "AI Depth fallback • " + (t.message ?: "inference unavailable")
+            if (!bitmap.isRecycled) bitmap.recycle()
+            depthInFlight.set(false)
+        }
+    }
+
+    private fun processDepthFrame(
+        bitmap: Bitmap,
+        snapshot: TrackingSnapshot,
+        track: ObjectTrackResult,
+        objectLockActive: Boolean
+    ) {
+        var outputBitmap: Bitmap? = null
+        try {
+            val result = depthAi.estimate(bitmap)
+            adaptiveScan.observeDepthInference(result.inferenceMs)
+            val stableDepth = synchronized(temporalDepthLock) {
+                temporalDepth.filter(
+                    result.depth,
+                    result.width,
+                    result.height,
+                    snapshot.motion,
+                    snapshot.quality
+                )
             }
+            val routedDepth = if (scanning) {
+                val nowMs = SystemClock.elapsedRealtime()
+                val routed = scanDataRouter.publishDepth(stableDepth, result.width, result.height, nowMs)
+                val sharedDepth = routed?.depth ?: stableDepth
+                synchronized(depthLock) {
+                    latestDepthData = sharedDepth.copyOf()
+                    latestDepthWidth = result.width
+                    latestDepthHeight = result.height
+                    latestDepthElapsedMs = nowMs
+                }
+                sharedDepth
+            } else {
+                stableDepth
+            }
+            // Preview and saved capture frames now read the same sanitised router depth.
+            val depthPreview = depthToBitmap(routedDepth, result.width, result.height)
+            outputBitmap = depthPreview
+            runOnUiThread {
+                if (scanning && !isDestroyed) {
+                    coverage.update(snapshot)
+                    miniPreview.setDepthPreview(
+                        depthPreview, coverage, track.x, track.y, objectLockActive, track.tracked,
+                        scanDataRouter.latest()?.mesh
+                    )
+                    coverageText.visibility = View.VISIBLE
+                    coverageText.text = coverage.percent().toString() + "% covered • AI depth • " + result.inferenceMs + "ms"
+                    val runtimeSettings = adaptiveScan.settings()
+                    val pressureNote = if (runtimeSettings.pressureLevel > 0) " • adaptive throttle ${runtimeSettings.pressureLevel}" else ""
+                    scanStatus.text = when {
+                        objectLockActive && !track.tracked ->
+                            "TARGET LOST • hold still and reveal the same object • relocalising"
+                        objectLockActive ->
+                            adaptiveScan.statusLabel() + " • TARGET LOCKED • confidence " +
+                                (track.score * 100f).toInt().coerceIn(0, 100) + "% • AI Depth " +
+                                result.inferenceMs + "ms" + pressureNote
+                        else ->
+                            adaptiveScan.statusLabel() + " • AI Depth " + result.backend + " • " +
+                                result.inferenceMs + "ms • DEPTH PREVIEW" + pressureNote
+                    }
+                } else if (!depthPreview.isRecycled) {
+                    depthPreview.recycle()
+                }
+            }
+            outputBitmap = null // Ownership passes to the main-thread preview callback.
+        } catch (t: Throwable) {
+            runOnUiThread {
+                if (scanning && !isDestroyed) {
+                    scanStatus.text = "AI Depth fallback • " + (t.message ?: "inference unavailable")
+                }
+            }
+        } finally {
+            if (!bitmap.isRecycled) bitmap.recycle()
+            outputBitmap?.let { if (!it.isRecycled) it.recycle() }
+            depthInFlight.set(false)
         }
     }
 
@@ -383,6 +541,66 @@ class MainActivity : ComponentActivity() {
         }
         bitmap.setPixels(pixels, 0, width, 0, 0, width, height)
         return bitmap
+    }
+
+    private data class DisplayTarget(
+        val x: Float,
+        val y: Float,
+        val width: Float,
+        val height: Float
+    )
+
+    /**
+     * Translate touch coordinates from the PreviewView's FILL_CENTER viewport
+     * into the rotated ImageAnalysis bitmap coordinates.
+     */
+    private fun viewToFramePoint(x: Float, y: Float, bitmap: Bitmap): Pair<Float, Float> {
+        val viewWidth = trackingOverlay.width.toFloat().coerceAtLeast(1f)
+        val viewHeight = trackingOverlay.height.toFloat().coerceAtLeast(1f)
+        val viewAspect = viewWidth / viewHeight
+        val imageAspect = bitmap.width.toFloat() / bitmap.height.toFloat()
+        return if (imageAspect > viewAspect) {
+            val visible = (viewAspect / imageAspect).coerceIn(0.01f, 1f)
+            val offset = (1f - visible) * 0.5f
+            ((offset + x.coerceIn(0f, 1f) * visible).coerceIn(0f, 1f)) to y.coerceIn(0f, 1f)
+        } else {
+            val visible = (imageAspect / viewAspect).coerceIn(0.01f, 1f)
+            val offset = (1f - visible) * 0.5f
+            x.coerceIn(0f, 1f) to (offset + y.coerceIn(0f, 1f) * visible).coerceIn(0f, 1f)
+        }
+    }
+
+    /** Translate the track box back into screen coordinates for the live overlays. */
+    private fun frameToViewTarget(
+        x: Float,
+        y: Float,
+        width: Float,
+        height: Float,
+        bitmap: Bitmap
+    ): DisplayTarget {
+        val viewWidth = trackingOverlay.width.toFloat().coerceAtLeast(1f)
+        val viewHeight = trackingOverlay.height.toFloat().coerceAtLeast(1f)
+        val viewAspect = viewWidth / viewHeight
+        val imageAspect = bitmap.width.toFloat() / bitmap.height.toFloat()
+        return if (imageAspect > viewAspect) {
+            val visible = (viewAspect / imageAspect).coerceIn(0.01f, 1f)
+            val offset = (1f - visible) * 0.5f
+            DisplayTarget(
+                ((x - offset) / visible).coerceIn(0f, 1f),
+                y.coerceIn(0f, 1f),
+                width / visible,
+                height
+            )
+        } else {
+            val visible = (imageAspect / viewAspect).coerceIn(0.01f, 1f)
+            val offset = (1f - visible) * 0.5f
+            DisplayTarget(
+                x.coerceIn(0f, 1f),
+                ((y - offset) / visible).coerceIn(0f, 1f),
+                width,
+                height / visible
+            )
+        }
     }
 
     private fun imageToBitmap(image: ImageProxy): Bitmap? {
@@ -426,14 +644,63 @@ class MainActivity : ComponentActivity() {
         YuvImage(nv21, ImageFormat.NV21, width, height, null)
             .compressToJpeg(
                 Rect(0, 0, width, height),
-                if (profile.mode == ScanMode.LOW_RAM) 40 else 50,
+                if (profile.mode == ScanMode.LOW_RAM) 55 else 72,
                 out
             )
         val bytes = out.toByteArray()
         val opts = BitmapFactory.Options().apply {
-            inSampleSize = if (profile.mode == ScanMode.LOW_RAM) 16 else 8
+            inSampleSize = when (profile.mode) {
+                ScanMode.LOW_RAM -> 4
+                ScanMode.BALANCED -> 4
+                ScanMode.PERFORMANCE -> 2
+            }
         }
-        return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)
+        val decoded = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts) ?: return null
+        val rotation = image.imageInfo.rotationDegrees
+        if (rotation == 0) return decoded
+        val matrix = Matrix().apply { postRotate(rotation.toFloat()) }
+        val rotated = Bitmap.createBitmap(
+            decoded, 0, 0, decoded.width, decoded.height, matrix, true
+        )
+        if (rotated !== decoded && !decoded.isRecycled) decoded.recycle()
+        return rotated
+    }
+
+    /** Exports the latest usable depth surface without stopping the live scan. */
+    private fun saveCurrentModel() {
+        if (reconstructing) {
+            Toast.makeText(this, "3D model is already building — wait for it to finish", Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (frameCount <= 0) {
+            Toast.makeText(this, "Start scanning and wait for the first depth preview", Toast.LENGTH_SHORT).show()
+            return
+        }
+        saveModelButton.isEnabled = false
+        saveModelButton.text = "Saving…"
+        scanStatus.text = "Saving current 3D checkpoint • live scan continues…"
+        val savedFrameCount = frameCount
+        scanSession.updateRuntimeSettings(adaptiveScan.settings())
+        exportExecutor.execute {
+            try {
+                val result = scanSession.buildResult(savedFrameCount, scanDataRouter.latest()?.mesh)
+                runOnUiThread {
+                    if (isFinishing || isDestroyed) return@runOnUiThread
+                    saveModelButton.isEnabled = true
+                    saveModelButton.text = "Save 3D Now"
+                    scanStatus.text = "Checkpoint saved • " + result.name + " • OBJ + GLB • scan can continue"
+                    Toast.makeText(this, "3D checkpoint saved: " + result.name, Toast.LENGTH_LONG).show()
+                }
+            } catch (t: Throwable) {
+                runOnUiThread {
+                    if (isFinishing || isDestroyed) return@runOnUiThread
+                    saveModelButton.isEnabled = true
+                    saveModelButton.text = "Save 3D Now"
+                    scanStatus.text = "Checkpoint not ready: " + (t.message ?: "wait for AI depth")
+                    Toast.makeText(this, "Belum boleh simpan model — tunggu depth preview AI", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
     }
 
     private fun finishScan() {
@@ -446,7 +713,7 @@ class MainActivity : ComponentActivity() {
             tracker.stop()
             objectTracker.clear()
             trackingOverlay.clearTarget()
-            temporalDepth.reset()
+            synchronized(temporalDepthLock) { temporalDepth.reset() }
             startButton.isEnabled = false
             startButton.text = "Finishing…"
             scanStatus.text = "Finishing current camera frame…"
@@ -459,7 +726,7 @@ class MainActivity : ComponentActivity() {
         scanning = false
         hologramOverlay.setActive(false)
         tracker.stop()
-        temporalDepth.reset()
+        synchronized(temporalDepthLock) { temporalDepth.reset() }
         objectTracker.clear()
         trackingOverlay.clearTarget()
         trackingLockButton.text = "Lock Target"
@@ -480,15 +747,16 @@ class MainActivity : ComponentActivity() {
         scanStatus.text = "Saved " + frameCount + " frames • building depth mesh…"
         val savedFrameCount = frameCount
         val savedCoverage = coverage.percent()
+        scanSession.updateRuntimeSettings(adaptiveScan.settings())
         exportExecutor.execute {
             try {
-                val result = scanSession.buildResult(savedFrameCount)
+                val result = scanSession.buildResult(savedFrameCount, scanDataRouter.latest()?.mesh)
                 runOnUiThread {
                     reconstructing = false
                     if (isFinishing || isDestroyed) return@runOnUiThread
                     startButton.isEnabled = true
                     startButton.text = "Start 3D Scan"
-                    scanStatus.text = "Depth mesh exported • " + savedFrameCount +
+                    scanStatus.text = adaptiveScan.statusLabel() + " • depth mesh exported • " + savedFrameCount +
                         " frames • " + savedCoverage + "% guide coverage • OBJ + GLB"
                     Toast.makeText(this, "Saved: " + result.name, Toast.LENGTH_LONG).show()
                 }
@@ -510,13 +778,20 @@ class MainActivity : ComponentActivity() {
         scanning = false
         hologramOverlay.setActive(false)
         tracker.stop()
-        temporalDepth.reset()
+        synchronized(temporalDepthLock) { temporalDepth.reset() }
         objectTracker.clear()
         trackingOverlay.clearTarget()
         previewHandler.removeCallbacksAndMessages(null)
         exportExecutor.shutdownNow()
         aiExecutor.shutdownNow()
-        depthAi.close()
+        // Close the model only after any in-flight depth inference has left the executor.
+        try {
+            depthExecutor.execute { depthAi.close() }
+            depthExecutor.shutdown()
+        } catch (_: Throwable) {
+            depthExecutor.shutdownNow()
+            depthAi.close()
+        }
         miniPreview.clear()
         super.onDestroy()
     }

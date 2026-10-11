@@ -24,16 +24,30 @@
             android:layout_marginTop="3dp" android:text="Ready • tap an object to track"
             android:textColor="#D9FFFFFF" android:textSize="12sp" android:maxLines="2" android:ellipsize="end" />
     </LinearLayout>
+    <!-- Compact live 3D/depth preview anchored at the upper-right, keeping the camera view visible. -->
     <LinearLayout
-        android:layout_width="218dp" android:layout_height="244dp" android:layout_gravity="center"
-        android:orientation="vertical" android:elevation="6dp">
+        android:layout_width="164dp" android:layout_height="196dp"
+        android:layout_gravity="top|end" android:layout_marginTop="76dp" android:layout_marginEnd="10dp"
+        android:orientation="vertical" android:elevation="8dp"
+        android:background="#D90B1018" android:padding="3dp">
         <com.aifusion.scanner.Scan3DPreviewView
-            android:id="@+id/miniPreview" android:layout_width="match_parent" android:layout_height="218dp" />
+            android:id="@+id/miniPreview" android:layout_width="match_parent" android:layout_height="160dp" />
         <TextView
-            android:id="@+id/coverageText" android:layout_width="match_parent" android:layout_height="wrap_content"
-            android:gravity="center" android:padding="3dp" android:text="0% • READY"
-            android:textColor="#FFFFFFFF" android:textSize="11sp" android:textStyle="bold" android:background="#B20B1015" />
+            android:id="@+id/coverageText" android:layout_width="match_parent" android:layout_height="30dp"
+            android:gravity="center" android:paddingStart="4dp" android:paddingEnd="4dp"
+            android:text="FULL FRAME • DEPTH WAITING"
+            android:textColor="#FFFFFFFF" android:textSize="9sp" android:textStyle="bold"
+            android:singleLine="true" android:ellipsize="end" android:background="#E60B1018" />
     </LinearLayout>
+    <Button
+        android:id="@+id/meshMode" android:layout_width="wrap_content" android:layout_height="wrap_content"
+        android:layout_gravity="bottom|center_horizontal" android:layout_marginBottom="246dp" android:text="Mesh: POLYGON" />
+    <Button
+        android:id="@+id/saveModel" android:layout_width="wrap_content" android:layout_height="wrap_content"
+        android:layout_gravity="bottom|center_horizontal" android:layout_marginBottom="192dp" android:text="Save 3D Now" />
+    <Button
+        android:id="@+id/scanMode" android:layout_width="wrap_content" android:layout_height="wrap_content"
+        android:layout_gravity="bottom|center_horizontal" android:layout_marginBottom="138dp" android:text="Scan: AUTO" />
     <Button
         android:id="@+id/trackingLock" android:layout_width="wrap_content" android:layout_height="wrap_content"
         android:layout_gravity="bottom|center_horizontal" android:layout_marginBottom="84dp" android:text="Lock Target" />

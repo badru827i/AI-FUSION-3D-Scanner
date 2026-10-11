@@ -4,41 +4,92 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Paint
+import android.graphics.Path
 import android.graphics.RectF
+import android.view.MotionEvent
 import android.util.AttributeSet
 import android.view.View
 import kotlin.math.cos
+import kotlin.math.max
+import kotlin.math.min
 import kotlin.math.sin
+import kotlin.math.sqrt
 
 /**
- * Lightweight live relief-mesh preview. It is derived from the current AI
- * relative-depth frame and, when a target is locked, crops around that target.
- * This is a visualization of monocular relative depth, not a metric scan.
+ * Lightweight interactive relative-depth surface preview.
+ *
+ * This renders a denser shaded triangle mesh from the current monocular depth estimate.
+ * It is an inspectable relative-depth relief, not metric geometry or a complete object mesh.
+ * Mesh density and edge-preserving smoothing are tuned for mid-range and low-memory devices.
  */
 class Scan3DPreviewView @JvmOverloads constructor(
     context: Context,
     attrs: AttributeSet? = null
 ) : View(context, attrs) {
 
+    private data class Vertex(
+        val x: Float,
+        val y: Float,
+        val z: Float,
+        val depth: Float,
+        val screenX: Float,
+        val screenY: Float
+    )
+
+    private data class Face(
+        val a: Vertex,
+        val b: Vertex,
+        val c: Vertex,
+        val averageZ: Float,
+        val color: Int
+    )
+
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val facePath = Path()
     private var bitmap: Bitmap? = null
+    private var routedMesh: PolygonMeshData? = null
     private var coverage: ScanCoverage? = null
-    private var rotation = 0f
+    private var yaw = -0.30f
+    private var pitch = 0.62f
+    private var zoom = 1f
+    private var lowPower = false
+    private var polygonMode = true
+    private var scanIntent = ScanIntent.AUTO
     private var aiDepth = false
     private var focusX = 0.5f
     private var focusY = 0.5f
     private var focusLocked = false
     private var trackingFound = true
     private var live = true
+    private var userAdjustedView = false
+    private var lastTouchX = 0f
+    private var lastTouchY = 0f
+    private var pinchStartDistance = 0f
+    private var pinchStartZoom = 1f
+
+    fun setPolygonMode(enabled: Boolean) {
+        polygonMode = enabled
+        invalidate()
+    }
+
+    fun setLowPowerMode(enabled: Boolean) {
+        lowPower = enabled
+        invalidate()
+    }
+
+    fun setScanIntent(intent: ScanIntent) {
+        scanIntent = intent
+        invalidate()
+    }
 
     fun setPreview(value: Bitmap, scanCoverage: ScanCoverage) {
         replaceBitmap(value)
+        routedMesh = null
         coverage = scanCoverage
         aiDepth = false
         live = false
         focusLocked = false
         trackingFound = true
-        rotation = (rotation + 0.08f) % 6.28318f
         visibility = View.VISIBLE
         invalidate()
     }
@@ -49,9 +100,11 @@ class Scan3DPreviewView @JvmOverloads constructor(
         targetX: Float = 0.5f,
         targetY: Float = 0.5f,
         targetLocked: Boolean = false,
-        targetTracking: Boolean = true
+        targetTracking: Boolean = true,
+        sharedMesh: PolygonMeshData? = null
     ) {
         replaceBitmap(value)
+        routedMesh = sharedMesh
         coverage = scanCoverage
         aiDepth = true
         live = true
@@ -59,9 +112,8 @@ class Scan3DPreviewView @JvmOverloads constructor(
         focusY = targetY.coerceIn(0f, 1f)
         focusLocked = targetLocked
         trackingFound = targetTracking
-        // Small continuous rotation makes changes in the reconstructed relief
-        // easier to read without running a permanent animation loop.
-        rotation = (rotation + 0.07f) % 6.28318f
+        // A subtle idle turn helps reveal the relief. User rotation takes priority.
+        if (!userAdjustedView) yaw = (yaw + 0.018f) % 6.28318f
         visibility = View.VISIBLE
         invalidate()
     }
@@ -82,136 +134,367 @@ class Scan3DPreviewView @JvmOverloads constructor(
     fun clear() {
         val previous = bitmap
         bitmap = null
+        routedMesh = null
         if (previous != null && !previous.isRecycled) previous.recycle()
         coverage = null
-        rotation = 0f
+        yaw = -0.30f
+        pitch = 0.62f
+        zoom = 1f
         aiDepth = false
         live = false
         focusLocked = false
         trackingFound = true
+        userAdjustedView = false
         visibility = View.GONE
         invalidate()
+    }
+
+    override fun onTouchEvent(event: MotionEvent): Boolean {
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                lastTouchX = event.x
+                lastTouchY = event.y
+                userAdjustedView = true
+                parent?.requestDisallowInterceptTouchEvent(true)
+                return true
+            }
+
+            MotionEvent.ACTION_POINTER_DOWN -> {
+                if (event.pointerCount >= 2) {
+                    pinchStartDistance = pointerDistance(event)
+                    pinchStartZoom = zoom
+                }
+                return true
+            }
+
+            MotionEvent.ACTION_MOVE -> {
+                if (event.pointerCount >= 2) {
+                    val distance = pointerDistance(event)
+                    if (pinchStartDistance > 1f && distance > 1f) {
+                        zoom = (pinchStartZoom * distance / pinchStartDistance).coerceIn(0.72f, 1.55f)
+                    }
+                } else {
+                    val dx = event.x - lastTouchX
+                    val dy = event.y - lastTouchY
+                    yaw = (yaw + dx * 0.008f) % 6.28318f
+                    pitch = (pitch + dy * 0.006f).coerceIn(-0.35f, 1.20f)
+                    lastTouchX = event.x
+                    lastTouchY = event.y
+                }
+                invalidate()
+                return true
+            }
+
+            MotionEvent.ACTION_POINTER_UP -> {
+                if (event.pointerCount > 2) {
+                    pinchStartDistance = pointerDistance(event, event.actionIndex)
+                    pinchStartZoom = zoom
+                } else {
+                    lastTouchX = event.x
+                    lastTouchY = event.y
+                }
+                return true
+            }
+
+            MotionEvent.ACTION_UP -> {
+                parent?.requestDisallowInterceptTouchEvent(false)
+                performClick()
+                return true
+            }
+
+            MotionEvent.ACTION_CANCEL -> {
+                parent?.requestDisallowInterceptTouchEvent(false)
+                return true
+            }
+        }
+        return true
+    }
+
+    private fun pointerDistance(event: MotionEvent, skipIndex: Int = -1): Float {
+        var first = -1
+        var second = -1
+        for (i in 0 until event.pointerCount) {
+            if (i == skipIndex) continue
+            if (first < 0) first = i else {
+                second = i
+                break
+            }
+        }
+        if (first < 0 || second < 0) return 0f
+        val dx = event.getX(first) - event.getX(second)
+        val dy = event.getY(first) - event.getY(second)
+        return sqrt(dx * dx + dy * dy)
+    }
+
+    override fun performClick(): Boolean {
+        super.performClick()
+        return true
     }
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
         val w = width.toFloat()
         val h = height.toFloat()
+        if (w <= 0f || h <= 0f) return
+
         paint.style = Paint.Style.FILL
-        // Translucent so the camera image is still partly visible behind the preview.
-        paint.color = 0xB20B1015.toInt()
+        paint.color = 0xE60B1018.toInt()
         canvas.drawRoundRect(RectF(0f, 0f, w, h), 18f, 18f, paint)
 
         val image = bitmap
-        if (image != null && !image.isRecycled) drawReliefMesh(canvas, image, w, h)
-        else {
+        if (image != null && !image.isRecycled && image.width > 1 && image.height > 1) {
+            val shared = routedMesh
+            if (shared != null && shared.vertexCount > 0 && shared.triangleIndices.isNotEmpty()) {
+                drawRoutedSurfaceMesh(canvas, shared, w, h)
+            } else {
+                drawSurfaceMesh(canvas, image, w, h)
+            }
+        } else {
             paint.color = 0xCCFFFFFF.toInt()
-            paint.textSize = 12f
+            paint.textSize = 12f * resources.displayMetrics.density
             canvas.drawText("Waiting for depth…", 10f, h / 2f, paint)
         }
         drawCoverage(canvas, w, h)
+        drawLegend(canvas, w, h)
     }
 
-    private fun drawReliefMesh(canvas: Canvas, image: Bitmap, w: Float, h: Float) {
-        val cols = 23
-        val rows = 23
-        val cx = w / 2f
-        val cy = h / 2f
-        val scale = minOf(w, h) * 0.34f
-        val regionW = if (focusLocked) 0.70f else 0.92f
-        val regionH = if (focusLocked) 0.74f else 0.92f
-        val regionLeft = (focusX - regionW / 2f).coerceIn(0f, 1f - regionW)
-        val regionTop = (focusY - regionH / 2f).coerceIn(0f, 1f - regionH)
-        val points = Array(rows) { Array(cols) { FloatArray(4) } }
-
-        for (y in 0 until rows) for (x in 0 until cols) {
-            val nxInRegion = x / (cols - 1f)
-            val nyInRegion = y / (rows - 1f)
-            val px = ((regionLeft + nxInRegion * regionW) * (image.width - 1))
-                .toInt().coerceIn(0, image.width - 1)
-            val py = ((regionTop + nyInRegion * regionH) * (image.height - 1))
-                .toInt().coerceIn(0, image.height - 1)
-            val p = image.getPixel(px, py)
-            val r = (p shr 16 and 0xff) / 255f
-            val g = (p shr 8 and 0xff) / 255f
-            val b = (p and 0xff) / 255f
-            val depth = 0.299f * r + 0.587f * g + 0.114f * b
-            val nx = (nxInRegion - 0.5f) * 2f
-            val ny = (nyInRegion - 0.5f) * 2f
-            val z = (depth - 0.5f) * if (aiDepth) 1.15f else 0.75f
-            points[y][x][0] = nx
-            points[y][x][1] = ny
-            points[y][x][2] = z
-            points[y][x][3] = depth
+    private fun drawSurfaceMesh(canvas: Canvas, image: Bitmap, w: Float, h: Float) {
+        // Higher mesh density reveals smaller depth changes; low-RAM mode stays conservative.
+        val divisions = if (lowPower) 16 else 32
+        val rows = divisions + 1
+        val cols = divisions + 1
+        val canFocusCrop = focusLocked && scanIntent != ScanIntent.LARGE_COVERAGE
+        val regionW = when (scanIntent) {
+            ScanIntent.AUTO -> if (canFocusCrop) 0.68f else 0.90f
+            ScanIntent.SMALL_DETAIL -> if (canFocusCrop) 0.52f else 0.72f
+            ScanIntent.LARGE_COVERAGE -> 1.0f
         }
-
-        val c = cos(rotation)
-        val s = sin(rotation)
-        val projected = Array(rows) { Array(cols) { FloatArray(4) } }
-        for (y in 0 until rows) for (x in 0 until cols) {
-            val p = points[y][x]
-            val rx = p[0] * c - p[2] * s
-            val rz = p[0] * s + p[2] * c
-            val perspective = (1.45f + rz).coerceAtLeast(0.65f)
-            projected[y][x][0] = cx + rx * scale / perspective
-            projected[y][x][1] = cy + p[1] * scale / perspective
-            projected[y][x][2] = rz
-            projected[y][x][3] = p[3]
+        val regionH = when (scanIntent) {
+            ScanIntent.AUTO -> if (canFocusCrop) 0.68f else 0.90f
+            ScanIntent.SMALL_DETAIL -> if (canFocusCrop) 0.52f else 0.72f
+            ScanIntent.LARGE_COVERAGE -> 1.0f
         }
+        val regionLeft = if (regionW >= 1f) 0f else (focusX - regionW / 2f).coerceIn(0f, 1f - regionW)
+        val regionTop = if (regionH >= 1f) 0f else (focusY - regionH / 2f).coerceIn(0f, 1f - regionH)
+        val cy = cos(yaw)
+        val sy = sin(yaw)
+        val cp = cos(pitch)
+        val sp = sin(pitch)
+        val scale = min(w, h) * 0.34f * zoom
+        val cameraDistance = 2.65f
+        val vertices = Array(rows) { arrayOfNulls<Vertex>(cols) }
 
-        paint.strokeWidth = 1.05f
-        paint.style = Paint.Style.STROKE
-        for (y in 0 until rows) for (x in 0 until cols) {
-            val p = projected[y][x]
-            if (x + 1 < cols) {
-                val q = projected[y][x + 1]
-                val depthTone = (((p[3] + q[3]) * 0.5f * 80f).toInt()).coerceIn(0, 80)
-                paint.color = ((155 + depthTone) shl 24) or 0x006FE7FF
-                canvas.drawLine(p[0], p[1], q[0], q[1], paint)
-            }
-            if (y + 1 < rows) {
-                val q = projected[y + 1][x]
-                paint.color = 0x9955D68A.toInt()
-                canvas.drawLine(p[0], p[1], q[0], q[1], paint)
+        for (gy in 0 until rows) {
+            for (gx in 0 until cols) {
+                val u = gx / (cols - 1f)
+                val v = gy / (rows - 1f)
+                val px = ((regionLeft + u * regionW) * (image.width - 1)).toInt().coerceIn(0, image.width - 1)
+                val py = ((regionTop + v * regionH) * (image.height - 1)).toInt().coerceIn(0, image.height - 1)
+                val depth = smoothDepth(image, px, py)
+                val x = (u - 0.5f) * 2f
+                val y = (v - 0.5f) * 2f
+                val z = (depth - 0.5f) * if (aiDepth) 0.96f else 0.65f
+
+                // Rotate the sampled depth surface in 3D, then apply mild perspective.
+                val rx = x * cy + z * sy
+                val rz = -x * sy + z * cy
+                val ry = y * cp - rz * sp
+                val cameraZ = y * sp + rz * cp
+                val perspective = cameraDistance / (cameraDistance - cameraZ).coerceAtLeast(1.25f)
+                vertices[gy][gx] = Vertex(
+                    rx, ry, cameraZ, depth,
+                    w / 2f + rx * scale * perspective,
+                    h / 2f + ry * scale * perspective
+                )
             }
         }
 
+        val faces = ArrayList<Face>(divisions * divisions * 2)
+        for (gy in 0 until divisions) {
+            for (gx in 0 until divisions) {
+                val a = vertices[gy][gx] ?: continue
+                val b = vertices[gy][gx + 1] ?: continue
+                val c = vertices[gy + 1][gx] ?: continue
+                val d = vertices[gy + 1][gx + 1] ?: continue
+                faces.add(createFace(a, c, b))
+                faces.add(createFace(b, c, d))
+            }
+        }
+
+        // Approximate painter's ordering to show overlapping relief surfaces naturally.
+        faces.sortBy { it.averageZ }
         paint.style = Paint.Style.FILL
-        paint.color = 0xF2FFFFFF.toInt()
-        paint.textSize = 11f
-        val title = when {
-            !aiDepth -> "3D PREVIEW"
-            !live -> "3D RESULT • RELATIVE DEPTH"
-            focusLocked && trackingFound -> "LIVE 3D • TRACK LOCKED"
-            focusLocked -> "LIVE 3D • RECOVERING"
-            else -> "LIVE 3D • AI DEPTH"
+        for (face in faces) {
+            facePath.reset()
+            facePath.moveTo(face.a.screenX, face.a.screenY)
+            facePath.lineTo(face.b.screenX, face.b.screenY)
+            facePath.lineTo(face.c.screenX, face.c.screenY)
+            facePath.close()
+            paint.color = face.color
+            canvas.drawPath(facePath, paint)
         }
-        canvas.drawText(title, 10f, 17f, paint)
-        if (focusLocked) {
-            paint.color = if (trackingFound) 0xFF55D68A.toInt() else 0xFFFFC857.toInt()
-            paint.textSize = 9f
-            canvas.drawText(if (trackingFound) "OBJECT FOCUS" else "HOLDING LAST POSITION", 10f, h - 18f, paint)
+
+        // Draw subtle surface wires after the faces for readable form and depth changes.
+        if (polygonMode) {
+        paint.style = Paint.Style.STROKE
+        paint.strokeWidth = if (lowPower) 0.9f else 1.15f
+        for (gy in 0 until rows) {
+            for (gx in 0 until cols) {
+                val p = vertices[gy][gx] ?: continue
+                paint.color = if (p.depth > 0.58f) 0xE66EF2FF.toInt() else 0xC955D6C7.toInt()
+                if (gx + 1 < cols) {
+                    val q = vertices[gy][gx + 1] ?: continue
+                    canvas.drawLine(p.screenX, p.screenY, q.screenX, q.screenY, paint)
+                }
+                if (gy + 1 < rows) {
+                    val q = vertices[gy + 1][gx] ?: continue
+                    canvas.drawLine(p.screenX, p.screenY, q.screenX, q.screenY, paint)
+                }
+            }
         }
+        }
+    }
+
+    /** Render the exact polygon topology produced by UnifiedScanDataRouter. */
+    private fun drawRoutedSurfaceMesh(canvas: Canvas, mesh: PolygonMeshData, w: Float, h: Float) {
+        val cy = cos(yaw); val sy = sin(yaw); val cp = cos(pitch); val sp = sin(pitch)
+        val scale = min(w, h) * 0.34f * zoom
+        val cameraDistance = 2.65f
+        val vertices = arrayOfNulls<Vertex>(mesh.vertexCount)
+        var i = 0; var index = 0
+        while (i + 2 < mesh.vertices.size && index < vertices.size) {
+            val u = mesh.vertices[i].coerceIn(0f, 1f)
+            val v = mesh.vertices[i + 1].coerceIn(0f, 1f)
+            val depth = mesh.vertices[i + 2].coerceIn(0f, 1f)
+            val x = (u - 0.5f) * 2f; val y = (v - 0.5f) * 2f
+            val z = (depth - 0.5f) * if (aiDepth) 0.96f else 0.65f
+            val rx = x * cy + z * sy; val rz = -x * sy + z * cy
+            val ry = y * cp - rz * sp; val cameraZ = y * sp + rz * cp
+            val perspective = cameraDistance / (cameraDistance - cameraZ).coerceAtLeast(1.25f)
+            vertices[index++] = Vertex(rx, ry, cameraZ, depth, w / 2f + rx * scale * perspective, h / 2f + ry * scale * perspective)
+            i += 3
+        }
+        val faces = ArrayList<Face>(mesh.triangleCount)
+        var t = 0
+        while (t + 2 < mesh.triangleIndices.size) {
+            val a = vertices.getOrNull(mesh.triangleIndices[t])
+            val b = vertices.getOrNull(mesh.triangleIndices[t + 1])
+            val d = vertices.getOrNull(mesh.triangleIndices[t + 2])
+            if (a != null && b != null && d != null) faces.add(createFace(a, b, d))
+            t += 3
+        }
+        faces.sortBy { it.averageZ }
+        paint.style = Paint.Style.FILL
+        for (face in faces) {
+            facePath.reset(); facePath.moveTo(face.a.screenX, face.a.screenY)
+            facePath.lineTo(face.b.screenX, face.b.screenY); facePath.lineTo(face.c.screenX, face.c.screenY); facePath.close()
+            paint.color = face.color; canvas.drawPath(facePath, paint)
+        }
+        if (polygonMode) {
+            paint.style = Paint.Style.STROKE; paint.strokeWidth = if (lowPower) 0.9f else 1.1f
+            val drawnEdges = HashSet<Long>(mesh.triangleIndices.size)
+            t = 0
+            while (t + 2 < mesh.triangleIndices.size) {
+                val a = mesh.triangleIndices[t]; val b = mesh.triangleIndices[t + 1]; val d = mesh.triangleIndices[t + 2]
+                drawMeshEdge(canvas, vertices, a, b, drawnEdges); drawMeshEdge(canvas, vertices, b, d, drawnEdges); drawMeshEdge(canvas, vertices, d, a, drawnEdges)
+                t += 3
+            }
+        }
+    }
+
+    private fun drawMeshEdge(canvas: Canvas, vertices: Array<Vertex?>, from: Int, to: Int, drawnEdges: MutableSet<Long>) {
+        if (from !in vertices.indices || to !in vertices.indices) return
+        val low = min(from, to); val high = max(from, to)
+        val key = (low.toLong() shl 32) or (high.toLong() and 0xffffffffL)
+        if (!drawnEdges.add(key)) return
+        val a = vertices[from] ?: return; val b = vertices[to] ?: return
+        paint.color = if ((a.depth + b.depth) * 0.5f > 0.58f) 0xE66EF2FF.toInt() else 0xC955D6C7.toInt()
+        canvas.drawLine(a.screenX, a.screenY, b.screenX, b.screenY, paint)
+    }
+    private fun smoothDepth(image: Bitmap, x: Int, y: Int): Float {
+        fun value(px: Int, py: Int): Float {
+            val color = image.getPixel(px.coerceIn(0, image.width - 1), py.coerceIn(0, image.height - 1))
+            return ((color shr 16 and 0xff) * 0.299f +
+                (color shr 8 and 0xff) * 0.587f + (color and 0xff) * 0.114f) / 255f
+        }
+        val center = value(x, y)
+        val neighbors = value(x - 1, y) + value(x + 1, y) +
+            value(x, y - 1) + value(x, y + 1)
+        // Keep most of the center sample so small edges survive smoothing.
+        return (center * 0.80f + neighbors * 0.05f).coerceIn(0f, 1f)
+    }
+
+    private fun createFace(a: Vertex, b: Vertex, c: Vertex): Face {
+        val ux = b.x - a.x
+        val uy = b.y - a.y
+        val uz = b.z - a.z
+        val vx = c.x - a.x
+        val vy = c.y - a.y
+        val vz = c.z - a.z
+        val nx = uy * vz - uz * vy
+        val ny = uz * vx - ux * vz
+        val nz = ux * vy - uy * vx
+        val normalLength = sqrt(nx * nx + ny * ny + nz * nz).coerceAtLeast(0.0001f)
+        val light = ((nx * -0.35f + ny * -0.45f + nz * 0.82f) / normalLength)
+            .coerceIn(-1f, 1f)
+        val depth = ((a.depth + b.depth + c.depth) / 3f).coerceIn(0f, 1f)
+        val luminance = (0.38f + light * 0.22f + depth * 0.28f).coerceIn(0.12f, 0.92f)
+        val red = (8f + 25f * luminance).toInt().coerceIn(0, 255)
+        val green = (55f + 170f * luminance).toInt().coerceIn(0, 255)
+        val blue = (90f + 165f * luminance).toInt().coerceIn(0, 255)
+        val alpha = if (aiDepth) 222 else 205
+        val color = (alpha shl 24) or (red shl 16) or (green shl 8) or blue
+        return Face(a, b, c, (a.z + b.z + c.z) / 3f, color)
     }
 
     private fun drawCoverage(canvas: Canvas, w: Float, h: Float) {
         val c = coverage ?: return
-        val radius = minOf(w, h) * 0.43f
+        val radius = min(w, h) * 0.43f
         val cx = w / 2f
         val cy = h / 2f
         val sector = 360f / 12f
         paint.style = Paint.Style.STROKE
-        paint.strokeWidth = 3.5f
+        paint.strokeWidth = 3.2f * resources.displayMetrics.density
         for (s in 0 until 12) {
-            paint.color = if (c.isVisited(12 + s)) 0xCC55D68A.toInt() else 0xCCEF5350.toInt()
+            paint.color = if (c.isVisited(12 + s)) 0xCC55D68A.toInt() else 0x55EF5350
             canvas.drawArc(
                 RectF(cx - radius, cy - radius, cx + radius, cy + radius),
                 s * sector - 90f, sector - 4f, false, paint
             )
         }
         paint.style = Paint.Style.FILL
-        paint.color = 0xDDFFFFFF.toInt()
-        paint.textSize = 10f
+        paint.color = 0xF2FFFFFF.toInt()
+        paint.textSize = 10f * resources.displayMetrics.density
         canvas.drawText(c.percent().toString() + "% coverage", 10f, h - 6f, paint)
+    }
+
+    private fun drawLegend(canvas: Canvas, w: Float, h: Float) {
+        val density = resources.displayMetrics.density
+        paint.style = Paint.Style.FILL
+        paint.color = 0xF2FFFFFF.toInt()
+        paint.textSize = 10.5f * density
+        val title = when {
+            !aiDepth -> "3D SURFACE PREVIEW"
+            !live -> "3D RELIEF • RELATIVE DEPTH"
+            scanIntent == ScanIntent.LARGE_COVERAGE -> "LIVE MODEL • FULL FRAME"
+            scanIntent == ScanIntent.SMALL_DETAIL && focusLocked && trackingFound -> "LIVE MODEL • DETAIL LOCKED"
+            scanIntent == ScanIntent.SMALL_DETAIL && focusLocked -> "LIVE MODEL • REACQUIRING"
+            focusLocked && trackingFound -> "LIVE MODEL • TARGET LOCKED"
+            focusLocked -> "LIVE MODEL • REACQUIRING"
+            else -> "LIVE MODEL • AI DEPTH"
+        }
+        canvas.drawText(title, 10f, 17f * density, paint)
+        paint.color = 0xCCBDEFFF.toInt()
+        paint.textSize = 9f * density
+        canvas.drawText("Drag: rotate • Pinch: zoom", 10f, 31f * density, paint)
+        paint.color = if (polygonMode) 0xFF7AF0B0.toInt() else 0xFFBDEFFF.toInt()
+        canvas.drawText(if (polygonMode) "TRIANGLE POLYGON MESH" else "SOLID SURFACE", 10f, 44f * density, paint)
+        if (focusLocked) {
+            paint.color = if (trackingFound) 0xFF7AF0B0.toInt() else 0xFFFFD36A.toInt()
+            canvas.drawText(
+                if (trackingFound) "OBJECT FOCUS" else "HOLDING LAST POSITION",
+                10f, h - 18f * density, paint
+            )
+        }
     }
 }

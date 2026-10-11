@@ -1,42 +1,51 @@
-# AI-FUSION-3D-Scanner
+# AI-FUSION 3D Scanner
 
-Camera-based 3D scanning for Android, designed to run without LiDAR.
+An on-device Android camera scanner prototype for phones without LiDAR. The project targets a wide range of Android devices, with the Samsung Galaxy A05s as a low-memory baseline and Galaxy A27 5G as a mid-range test target.
 
-## Test devices
-- Samsung Galaxy A05s — low-RAM compatibility test
-- Samsung Galaxy A27 5G — balanced/performance test
-- Other Android phones — compatibility testing
+## Adaptive scan modes
 
-## Pipeline
-Camera capture → multi-view frames → depth estimation → point cloud → mesh → texture → GLB/OBJ export.
+The scan-mode button cycles through three strategies:
 
-## Smart Device Engine
-v0.1 detects RAM, CPU cores and ABI and selects LOW_RAM, BALANCED or PERFORMANCE. The base app stays lightweight; ONNX/TFLite depth inference and GPU/NPU delegates are planned as separate modules.
+- **AUTO** — conservative sampling, selected from the detected device profile.
+- **SMALL DETAIL** — tighter live-depth preview, higher capture JPEG quality, shorter depth-sampling interval, and a larger mesh budget where the device allows it.
+- **LARGE COVERAGE** — full-frame depth preview and a lower-cost analysis stream to help scan larger objects without focusing the preview on a tracked patch.
 
-## Status
-v0.1.0 — camera capture foundation + adaptive device profile.
+The user can lock an object to guide visual tracking. Large Coverage deliberately keeps the reconstruction preview full-frame even when a tracking target is locked.
 
-## Scanner v0.2
+## Adaptive device and runtime budget
 
-Implemented:
-- CameraX multi-frame JPEG capture
-- A05s/A27 adaptive LOW_RAM, BALANCED and PERFORMANCE profiles
-- Local scan storage and scan metadata
-- Lightweight mesh generation with quality levels
-- OBJ export
-- GLB 2.0 export
-- No cloud/server dependency
+- SmartDeviceEngine selects LOW_RAM, BALANCED, or PERFORMANCE from detected RAM and CPU cores.
+- AdaptiveScanController selects camera capture cadence, depth inference cadence, JPEG quality, and mesh output resolution.
+- After each successful depth inference, runtime inference time is measured. Slow inference increases the depth interval; several quick inferences are required before the controller reduces throttling again.
+- The scanner uses a CPU baseline and may use the TensorFlow Lite GPU delegate when supported. It does not assume every Android phone exposes a usable GPU or NPU delegate.
+- Captured frames and exported scan files are stored locally. No cloud or server is required for a scan.
 
-The current mesh is a lightweight geometry proxy so the APK remains small and stable on low-RAM phones. True learned camera-to-depth reconstruction, texture projection, and ONNX/TFLite GPU/NPU inference are deliberately not claimed as complete until an actual model is bundled and validated.
+## Current implementation
 
-## Scanner stability + depth-mesh work
+- CameraX preview, still capture, and bounded live analysis.
+- Gyroscope/accelerometer motion guidance.
+- Lightweight locked-target tracking with confidence and recovery feedback.
+- Hologram grid overlay and live relative-depth relief preview.
+- MiDaS-small TensorFlow Lite inference, with a GPU delegate attempt and CPU fallback.
+- OBJ and GLB 2.0 export plus per-scan JSON metadata.
+- Metadata records scan intent, selected device profile, mesh budget, and final adaptive pressure level.
 
-Current branch work improves the scan pipeline by:
-- limiting live-analysis resolution for lower-memory phones;
-- reading CameraX YUV planes using their actual row/pixel strides;
-- preventing overlapping capture requests and using bounded exponential retry delays;
-- preserving successful camera frames when a later capture or export fails;
-- saving compact AI depth snapshots and creating OBJ/GLB geometry from an actual depth map instead of a generated radial sphere;
-- recording reconstruction metadata and adding GLB position accessor bounds.
+## Important limitations
 
-**Important limitation:** the exported geometry is currently a *single-view relative-depth surface* derived from MiDaS output. It is not metric/real-world scale, does not include a projected color texture, and does not yet fuse/align all camera views into a watertight full object. Multi-view pose tracking, depth-map alignment, surface fusion, and on-device validation on multiple phones remain future work. The scanner should not be advertised as a completed photogrammetry solution yet.
+**This is not yet a complete multi-view photogrammetry or metric 3D scanner.** MiDaS provides relative monocular depth rather than measured real-world distances. The exported OBJ/GLB is currently a 2.5D surface generated from the last usable saved depth map; frames from different camera positions are saved but are not yet aligned and fused into one watertight full-object mesh. Projected colour textures, calibrated metric scale, and robust reconstruction for textureless, glossy, or very dark objects are also not yet complete.
+
+The scan modes change the sampling, preview and mesh budget used by the current pipeline; Large Coverage does not yet claim that multiple views are fused into a complete object. Real accuracy and stability must be validated on physical devices and against objects of known dimensions before making professional-scanner claims.
+
+## Build
+
+The GitHub Actions workflow downloads and checksum-verifies the MiDaS TFLite model, builds the Android debug APK with JDK 17 / Gradle, and publishes the APK as a workflow artifact. The model is fetched during CI rather than included as a binary in Git.
+
+### Live 3D checkpoint saving
+
+During a scan, use **Save 3D Now** to export the latest usable AI depth surface to the current scan session as OBJ and GLB without stopping capture. The button reports when the first usable depth map is not ready yet. Checkpoint export is serialized with scan-session writes to reduce file-list races; the final scan export still runs when scanning is stopped. The saved geometry remains a single-view relative-depth surface, not a fused full-object scan.
+
+## Unified scan data and polygon mesh router
+
+The scanner now has a bounded-memory `UnifiedScanDataRouter` that publishes a sanitised relative-depth snapshot, current camera-motion/tracking metadata, depth-quality statistics, and a downsampled polygon mesh. Invalid depth values are clamped/repaired, dimensions and sample counts are validated, and triangles crossing large depth discontinuities are omitted to reduce long mesh spikes. Live tracking is published independently from depth inference, so tracking updates do not have to wait for the depth model. The preview and captured-frame storage use the router's sanitised depth source. The polygon mesh is available in the shared snapshot; the existing preview still draws its own screen-space mesh and the OBJ/GLB exporter currently rebuilds geometry from the saved depth map, so complete shared-topology consumption across preview and export remains a follow-up integration task.
+
+**Accuracy note:** this is still a monocular relative-depth surface, not a metric LiDAR scan or a fused watertight full-object mesh. Real multi-view fusion requires calibrated camera poses and cross-frame surface alignment.
