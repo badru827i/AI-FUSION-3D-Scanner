@@ -43,3 +43,9 @@ The GitHub Actions workflow downloads and checksum-verifies the MiDaS TFLite mod
 ### Live 3D checkpoint saving
 
 During a scan, use **Save 3D Now** to export the latest usable AI depth surface to the current scan session as OBJ and GLB without stopping capture. The button reports when the first usable depth map is not ready yet. Checkpoint export is serialized with scan-session writes to reduce file-list races; the final scan export still runs when scanning is stopped. The saved geometry remains a single-view relative-depth surface, not a fused full-object scan.
+
+## Unified scan data and polygon mesh router
+
+The scanner now has a lightweight `UnifiedScanDataRouter` that publishes the latest relative-depth snapshot together with tracking metadata and a shared triangle-mesh topology. The camera/depth path publishes into this snapshot, captured frames read the latest routed depth for session storage, and the 3D preview renders from the same depth result. The mesh is a downsampled triangle surface intended for low-memory Android devices.
+
+**Accuracy note:** this is still a monocular relative-depth surface, not a metric LiDAR scan or a fused watertight full-object mesh. Real multi-view fusion requires calibrated camera poses and cross-frame surface alignment.
