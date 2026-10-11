@@ -19,6 +19,7 @@ class ScanSession(private val context: Context, private val profile: DeviceProfi
     private val depthMaps = mutableListOf<File>()
     private var scanSettings: AdaptiveScanSettings? = null
 
+    @Synchronized
     fun start(settings: AdaptiveScanSettings? = null) {
         scanSettings = settings
         val sessionDir = File(root, "scan_${System.currentTimeMillis()}")
@@ -31,14 +32,17 @@ class ScanSession(private val context: Context, private val profile: DeviceProfi
         depthMaps.clear()
     }
 
+    @Synchronized
     fun updateRuntimeSettings(settings: AdaptiveScanSettings) {
         scanSettings = settings
     }
 
+    @Synchronized
     fun recordFrame(file: File) {
         if (file.isFile && file.length() > 0L) frames += file
     }
 
+    @Synchronized
     fun recordTracking(frame: Int, snapshot: TrackingSnapshot) {
         tracking += snapshot
     }
@@ -47,6 +51,7 @@ class ScanSession(private val context: Context, private val profile: DeviceProfi
      * Store a compact 8-bit depth snapshot beside the JPEG frames.
      * This is a relative monocular depth surface, not metric depth.
      */
+    @Synchronized
     fun recordDepthMap(frameIndex: Int, depth: FloatArray, width: Int, height: Int) {
         if (width < 2 || height < 2 || width.toLong() * height.toLong() > depth.size) return
         val dir = framesDir.parentFile ?: return
@@ -65,6 +70,7 @@ class ScanSession(private val context: Context, private val profile: DeviceProfi
         depthMaps += file
     }
 
+    @Synchronized
     fun buildResult(frameCount: Int): ScanResult {
         val dir = framesDir.parentFile ?: root
         val name = dir.name
