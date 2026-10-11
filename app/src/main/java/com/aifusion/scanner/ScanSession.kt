@@ -165,23 +165,33 @@ object MeshGenerator {
             }
         }
 
-        val indices = IntArray((outWidth - 1) * (outHeight - 1) * 6)
-        var q = 0
+        // Do not bridge large depth discontinuities: those triangles create
+        // stretched spikes and noisy "curtains" around object silhouettes.
+        // Threshold is in normalized relative-depth units, not metres.
+        val indexBuffer = ArrayList<Int>((outWidth - 1) * (outHeight - 1) * 6)
+        val edgeThreshold = 0.10f
+        fun z(index: Int): Float = vertices[index * 3 + 2]
+        fun addTriangle(a: Int, b: Int, c: Int) {
+            val za = z(a)
+            val zb = z(b)
+            val zc = z(c)
+            if (maxOf(za, zb, zc) - minOf(za, zb, zc) <= edgeThreshold) {
+                indexBuffer.add(a)
+                indexBuffer.add(b)
+                indexBuffer.add(c)
+            }
+        }
         for (y in 0 until outHeight - 1) {
             for (x in 0 until outWidth - 1) {
                 val a = y * outWidth + x
                 val b = a + 1
                 val c = a + outWidth + 1
                 val d = a + outWidth
-                indices[q++] = a
-                indices[q++] = d
-                indices[q++] = b
-                indices[q++] = b
-                indices[q++] = d
-                indices[q++] = c
+                addTriangle(a, d, b)
+                addTriangle(b, d, c)
             }
         }
-        return Mesh(vertices, indices)
+        return Mesh(vertices, indexBuffer.toIntArray())
     }
 }
 
