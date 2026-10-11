@@ -92,6 +92,47 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
+
+        // One floating control button keeps the camera view uncluttered.
+        val controlsPanel = findViewById<View>(R.id.controlsPanel)
+        val scanMenuButton = findViewById<Button>(R.id.scanMenuButton)
+        var controlsExpanded = false
+        controlsPanel.alpha = 0f
+        controlsPanel.translationY = 28f
+        controlsPanel.rotation = -2f
+        scanMenuButton.setOnClickListener {
+            controlsExpanded = !controlsExpanded
+            if (controlsExpanded) {
+                controlsPanel.visibility = View.VISIBLE
+                controlsPanel.alpha = 0f
+                controlsPanel.translationY = 34f
+                controlsPanel.rotation = -2f
+                controlsPanel.animate().cancel()
+                controlsPanel.animate()
+                    .alpha(1f)
+                    .translationY(0f)
+                    .rotation(0f)
+                    .setDuration(300L)
+                    .setInterpolator(android.view.animation.OvershootInterpolator(0.72f))
+                    .start()
+                scanMenuButton.text = "×"
+                scanMenuButton.contentDescription = "Close scan controls"
+                scanMenuButton.animate().rotation(45f).setDuration(220L).start()
+            } else {
+                controlsPanel.animate().cancel()
+                controlsPanel.animate()
+                    .alpha(0f)
+                    .translationY(28f)
+                    .rotation(-2f)
+                    .setDuration(190L)
+                    .setInterpolator(android.view.animation.DecelerateInterpolator())
+                    .withEndAction { controlsPanel.visibility = View.GONE }
+                    .start()
+                scanMenuButton.text = "＋"
+                scanMenuButton.contentDescription = "Open scan controls"
+                scanMenuButton.animate().rotation(0f).setDuration(220L).start()
+            }
+        }
         previewView = findViewById(R.id.preview)
         miniPreview = findViewById(R.id.miniPreview)
         deviceStatus = findViewById(R.id.deviceStatus)
