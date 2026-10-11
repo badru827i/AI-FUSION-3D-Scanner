@@ -40,6 +40,9 @@
             android:singleLine="true" android:ellipsize="end" android:background="#E60B1018" />
     </LinearLayout>
     <Button
+        android:id="@+id/scanMode" android:layout_width="wrap_content" android:layout_height="wrap_content"
+        android:layout_gravity="bottom|center_horizontal" android:layout_marginBottom="138dp" android:text="Scan: AUTO" />
+    <Button
         android:id="@+id/trackingLock" android:layout_width="wrap_content" android:layout_height="wrap_content"
         android:layout_gravity="bottom|center_horizontal" android:layout_marginBottom="84dp" android:text="Lock Target" />
     <Button
