@@ -71,7 +71,7 @@ class ScanSession(private val context: Context, private val profile: DeviceProfi
     }
 
     @Synchronized
-    fun buildResult(frameCount: Int): ScanResult {
+    fun buildResult(frameCount: Int, sharedMesh: PolygonMeshData? = null): ScanResult {
         val dir = framesDir.parentFile ?: root
         val name = dir.name
         val validFrames = frames.filter { it.isFile && it.length() > 0L }
@@ -84,7 +84,13 @@ class ScanSession(private val context: Context, private val profile: DeviceProfi
             ScanMode.BALANCED -> 160
             ScanMode.PERFORMANCE -> 224
         }
-        val mesh = MeshGenerator.fromDepthMap(usableDepth, maxDimension)
+        // Prefer the exact shared router topology used by the live preview.
+        // Fall back to the saved depth map if the routed mesh is not usable.
+        val mesh = if (sharedMesh != null && sharedMesh.vertices.size >= 12 && sharedMesh.triangleIndices.size >= 6) {
+            MeshGenerator.fromPolygonMesh(sharedMesh)
+        } else {
+            MeshGenerator.fromDepthMap(usableDepth, maxDimension)
+        }
         require(mesh.vertices.size >= 12 && mesh.indices.size >= 6) {
             "AI depth map did not produce a usable surface"
         }
@@ -105,6 +111,25 @@ class ScanSession(private val context: Context, private val profile: DeviceProfi
 data class Mesh(val vertices: FloatArray, val indices: IntArray)
 
 object MeshGenerator {
+    /** Converts the router's exact vertex/index topology into export coordinates. */
+    fun fromPolygonMesh(source: PolygonMeshData): Mesh {
+        require(source.vertices.size >= 12 && source.vertices.size % 3 == 0) { "Invalid routed mesh vertices" }
+        require(source.triangleIndices.size >= 6 && source.triangleIndices.size % 3 == 0) { "Invalid routed mesh indices" }
+        val vertices = FloatArray(source.vertices.size)
+        var i = 0
+        while (i + 2 < source.vertices.size) {
+            val x = source.vertices[i].coerceIn(0f, 1f)
+            val y = source.vertices[i + 1].coerceIn(0f, 1f)
+            val z = source.vertices[i + 2].coerceIn(0f, 1f)
+            vertices[i] = (x - 0.5f) * 2f
+            vertices[i + 1] = (0.5f - y) * 2f
+            vertices[i + 2] = (z - 0.5f) * 1.2f
+            i += 3
+        }
+        val indices = source.triangleIndices.copyOf()
+        require(indices.all { it in 0 until vertices.size / 3 }) { "Routed mesh contains an invalid index" }
+        return Mesh(vertices, indices)
+    }
     /**
      * Builds a 2.5D surface from an actual saved AI depth map.
      * It intentionally does not fabricate a sphere or claim camera-pose fusion.
