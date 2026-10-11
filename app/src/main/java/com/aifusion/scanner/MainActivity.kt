@@ -408,6 +408,8 @@ class MainActivity : ComponentActivity() {
 
         // Tracking is updated on its own cadence and no longer waits for AI-depth inference.
         val snapshot = tracker.snapshot()
+        // Route live tracking immediately, not only when a still frame is captured.
+        scanDataRouter.publishTracking(snapshot)
         val track = objectTracker.update(bitmap, snapshot.motion)
         val objectLockActive = objectTracker.isActive()
         val displayTarget = frameToViewTarget(track.x, track.y, track.width, track.height, bitmap)
@@ -473,17 +475,22 @@ class MainActivity : ComponentActivity() {
                     snapshot.quality
                 )
             }
-            if (scanning) {
+            val routedDepth = if (scanning) {
                 val nowMs = SystemClock.elapsedRealtime()
-                scanDataRouter.publishDepth(stableDepth, result.width, result.height, nowMs)
+                val routed = scanDataRouter.publishDepth(stableDepth, result.width, result.height, nowMs)
+                val sharedDepth = routed?.depth ?: stableDepth
                 synchronized(depthLock) {
-                    latestDepthData = stableDepth.copyOf()
+                    latestDepthData = sharedDepth.copyOf()
                     latestDepthWidth = result.width
                     latestDepthHeight = result.height
                     latestDepthElapsedMs = nowMs
                 }
+                sharedDepth
+            } else {
+                stableDepth
             }
-            val depthPreview = depthToBitmap(stableDepth, result.width, result.height)
+            // Preview and saved capture frames now read the same sanitised router depth.
+            val depthPreview = depthToBitmap(routedDepth, result.width, result.height)
             outputBitmap = depthPreview
             runOnUiThread {
                 if (scanning && !isDestroyed) {
