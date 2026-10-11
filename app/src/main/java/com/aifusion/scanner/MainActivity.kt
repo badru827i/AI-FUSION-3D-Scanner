@@ -93,6 +93,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
         previewView = findViewById(R.id.preview)
+        miniPreview = findViewById(R.id.miniPreview)
         deviceStatus = findViewById(R.id.deviceStatus)
         scanStatus = findViewById(R.id.scanStatus)
         startButton = findViewById(R.id.startScan)
@@ -120,7 +121,6 @@ class MainActivity : ComponentActivity() {
                 scanStatus.text = if (scanning) "Tap an object in the preview to lock tracking" else "Start scan, then tap an object to lock tracking"
             }
         }
-        miniPreview = findViewById(R.id.miniPreview)
         miniPreview.visibility = View.GONE
         trackingOverlay = findViewById(R.id.trackingOverlay)
         hologramOverlay = findViewById(R.id.hologramOverlay)
