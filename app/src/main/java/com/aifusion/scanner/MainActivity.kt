@@ -106,7 +106,13 @@ class MainActivity : ComponentActivity() {
             meshModeButton.text = if (polygonMeshEnabled) "Mesh: POLYGON" else "Mesh: SOLID"
         }
         miniPreview.setPolygonMode(polygonMeshEnabled)
-        saveModelButton.setOnClickListener { saveCurrentModel() }\n        findViewById<Button>(R.id.completedModels).setOnClickListener {\n            startActivity(android.content.Intent(this, CompletedModelsActivity::class.java))\n        }
+        saveModelButton.setOnClickListener { saveCurrentModel() }
+        findViewById<Button>(R.id.completedModels).setOnClickListener {
+            startActivity(android.content.Intent(this, CompletedModelsActivity::class.java))
+        }
+        findViewById<Button>(R.id.turntableSetup).setOnClickListener {
+            startActivity(android.content.Intent(this, TurntableSetupActivity::class.java))
+        }
         scanModeButton = findViewById(R.id.scanMode)
         trackingLockButton = findViewById(R.id.trackingLock)
         trackingLockButton.setOnClickListener {
@@ -285,7 +291,15 @@ class MainActivity : ComponentActivity() {
                         }
                         recordCapturedFrame(file)
                         if (scanning) {
-                            previewHandler.postDelayed({ captureFrame() }, adaptiveScan.settings().captureIntervalMs)
+                            val turntablePrefs = getSharedPreferences("turntable_scan", MODE_PRIVATE)
+                            val turntableEnabled = turntablePrefs.getBoolean("enabled", false)
+                            val rotationMs = turntablePrefs.getLong("rotation_ms", 0L)
+                            val intervalMs = if (turntableEnabled && rotationMs > 0L) {
+                                (rotationMs / 24L).coerceIn(700L, 2500L)
+                            } else {
+                                adaptiveScan.settings().captureIntervalMs
+                            }
+                            previewHandler.postDelayed({ captureFrame() }, intervalMs)
                         }
                     }
 
