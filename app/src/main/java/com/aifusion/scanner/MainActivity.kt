@@ -45,6 +45,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var deviceStatus: TextView
     private lateinit var scanStatus: TextView
     private lateinit var startButton: Button
+    private lateinit var saveModelButton: Button
     private lateinit var scanModeButton: Button
     private lateinit var adaptiveScan: AdaptiveScanController
     private lateinit var trackingLockButton: Button
@@ -91,6 +92,8 @@ class MainActivity : ComponentActivity() {
         deviceStatus = findViewById(R.id.deviceStatus)
         scanStatus = findViewById(R.id.scanStatus)
         startButton = findViewById(R.id.startScan)
+        saveModelButton = findViewById(R.id.saveModel)
+        saveModelButton.setOnClickListener { saveCurrentModel() }
         scanModeButton = findViewById(R.id.scanMode)
         trackingLockButton = findViewById(R.id.trackingLock)
         trackingLockButton.setOnClickListener {
@@ -637,6 +640,43 @@ class MainActivity : ComponentActivity() {
         )
         if (rotated !== decoded && !decoded.isRecycled) decoded.recycle()
         return rotated
+    }
+
+    /** Exports the latest usable depth surface without stopping the live scan. */
+    private fun saveCurrentModel() {
+        if (reconstructing) {
+            Toast.makeText(this, "3D model is already building — wait for it to finish", Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (frameCount <= 0) {
+            Toast.makeText(this, "Start scanning and wait for the first depth preview", Toast.LENGTH_SHORT).show()
+            return
+        }
+        saveModelButton.isEnabled = false
+        saveModelButton.text = "Saving…"
+        scanStatus.text = "Saving current 3D checkpoint • live scan continues…"
+        val savedFrameCount = frameCount
+        scanSession.updateRuntimeSettings(adaptiveScan.settings())
+        exportExecutor.execute {
+            try {
+                val result = scanSession.buildResult(savedFrameCount)
+                runOnUiThread {
+                    if (isFinishing || isDestroyed) return@runOnUiThread
+                    saveModelButton.isEnabled = true
+                    saveModelButton.text = "Save 3D Now"
+                    scanStatus.text = "Checkpoint saved • " + result.name + " • OBJ + GLB • scan can continue"
+                    Toast.makeText(this, "3D checkpoint saved: " + result.name, Toast.LENGTH_LONG).show()
+                }
+            } catch (t: Throwable) {
+                runOnUiThread {
+                    if (isFinishing || isDestroyed) return@runOnUiThread
+                    saveModelButton.isEnabled = true
+                    saveModelButton.text = "Save 3D Now"
+                    scanStatus.text = "Checkpoint not ready: " + (t.message ?: "wait for AI depth")
+                    Toast.makeText(this, "Belum boleh simpan model — tunggu depth preview AI", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
     }
 
     private fun finishScan() {
