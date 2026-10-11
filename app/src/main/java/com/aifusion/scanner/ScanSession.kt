@@ -31,6 +31,10 @@ class ScanSession(private val context: Context, private val profile: DeviceProfi
         depthMaps.clear()
     }
 
+    fun updateRuntimeSettings(settings: AdaptiveScanSettings) {
+        scanSettings = settings
+    }
+
     fun recordFrame(file: File) {
         if (file.isFile && file.length() > 0L) frames += file
     }
