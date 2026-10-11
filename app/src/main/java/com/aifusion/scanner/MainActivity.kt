@@ -46,6 +46,8 @@ class MainActivity : ComponentActivity() {
     private lateinit var scanStatus: TextView
     private lateinit var startButton: Button
     private lateinit var saveModelButton: Button
+    private lateinit var meshModeButton: Button
+    private var polygonMeshEnabled = true
     private lateinit var scanModeButton: Button
     private lateinit var adaptiveScan: AdaptiveScanController
     private lateinit var trackingLockButton: Button
@@ -93,6 +95,14 @@ class MainActivity : ComponentActivity() {
         scanStatus = findViewById(R.id.scanStatus)
         startButton = findViewById(R.id.startScan)
         saveModelButton = findViewById(R.id.saveModel)
+        meshModeButton = findViewById(R.id.meshMode)
+        meshModeButton.text = "Mesh: POLYGON"
+        meshModeButton.setOnClickListener {
+            polygonMeshEnabled = !polygonMeshEnabled
+            miniPreview.setPolygonMode(polygonMeshEnabled)
+            meshModeButton.text = if (polygonMeshEnabled) "Mesh: POLYGON" else "Mesh: SOLID"
+        }
+        miniPreview.setPolygonMode(polygonMeshEnabled)
         saveModelButton.setOnClickListener { saveCurrentModel() }
         scanModeButton = findViewById(R.id.scanMode)
         trackingLockButton = findViewById(R.id.trackingLock)
