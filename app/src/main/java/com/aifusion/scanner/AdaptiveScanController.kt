@@ -27,10 +27,10 @@ data class AdaptiveScanSettings(
  * CPU remains the baseline; this controller does not assume an NPU exists.
  */
 class AdaptiveScanController(private val profile: DeviceProfile) {
-    var selectedIntent: ScanIntent = ScanIntent.AUTO
+    @Volatile var selectedIntent: ScanIntent = ScanIntent.AUTO
         private set
 
-    private var pressureLevel = 0
+    @Volatile private var pressureLevel = 0
     private var fastInferenceStreak = 0
 
     fun cycleIntent(): ScanIntent {
