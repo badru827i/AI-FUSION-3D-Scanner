@@ -750,7 +750,7 @@ class MainActivity : ComponentActivity() {
         scanSession.updateRuntimeSettings(adaptiveScan.settings())
         exportExecutor.execute {
             try {
-                val result = scanSession.buildResult(savedFrameCount)
+                val result = scanSession.buildResult(savedFrameCount, scanDataRouter.latest()?.mesh)
                 runOnUiThread {
                     reconstructing = false
                     if (isFinishing || isDestroyed) return@runOnUiThread
