@@ -26,9 +26,12 @@ object SmartDeviceEngine {
         val abi = Build.SUPPORTED_ABIS.firstOrNull() ?: "unknown"
         val soc = listOf(Build.HARDWARE, Build.BOARD, Build.SOC_MANUFACTURER, Build.SOC_MODEL)
             .filter { it.isNotBlank() }.distinct().joinToString(" / ")
+        // Prefer the highest safe software profile the device can reasonably sustain.
+        // Six GB devices can use PERFORMANCE when they also expose at least six CPU cores;
+        // weaker devices stay in BALANCED/LOW_RAM to protect tracking responsiveness.
         val mode = when {
             ramMb < 5000 || cores <= 4 -> ScanMode.LOW_RAM
-            ramMb >= 7000 && cores >= 6 -> ScanMode.PERFORMANCE
+            ramMb >= 6000 && cores >= 6 -> ScanMode.PERFORMANCE
             else -> ScanMode.BALANCED
         }
         val acceleration = if (Build.VERSION.SDK_INT >= 31) "CPU/GPU delegate ready" else "CPU"

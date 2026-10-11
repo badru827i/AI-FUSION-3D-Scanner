@@ -17,8 +17,11 @@ class ScanSession(private val context: Context, private val profile: DeviceProfi
     private val frames = mutableListOf<File>()
     private val tracking = mutableListOf<TrackingSnapshot>()
     private val depthMaps = mutableListOf<File>()
+    private var scanSettings: AdaptiveScanSettings? = null
 
-    fun start() {
+    @Synchronized
+    fun start(settings: AdaptiveScanSettings? = null) {
+        scanSettings = settings
         val sessionDir = File(root, "scan_${System.currentTimeMillis()}")
         framesDir = File(sessionDir, "frames")
         if (!framesDir.mkdirs() && !framesDir.isDirectory) {
@@ -29,10 +32,17 @@ class ScanSession(private val context: Context, private val profile: DeviceProfi
         depthMaps.clear()
     }
 
+    @Synchronized
+    fun updateRuntimeSettings(settings: AdaptiveScanSettings) {
+        scanSettings = settings
+    }
+
+    @Synchronized
     fun recordFrame(file: File) {
         if (file.isFile && file.length() > 0L) frames += file
     }
 
+    @Synchronized
     fun recordTracking(frame: Int, snapshot: TrackingSnapshot) {
         tracking += snapshot
     }
@@ -41,6 +51,7 @@ class ScanSession(private val context: Context, private val profile: DeviceProfi
      * Store a compact 8-bit depth snapshot beside the JPEG frames.
      * This is a relative monocular depth surface, not metric depth.
      */
+    @Synchronized
     fun recordDepthMap(frameIndex: Int, depth: FloatArray, width: Int, height: Int) {
         if (width < 2 || height < 2 || width.toLong() * height.toLong() > depth.size) return
         val dir = framesDir.parentFile ?: return
@@ -59,7 +70,8 @@ class ScanSession(private val context: Context, private val profile: DeviceProfi
         depthMaps += file
     }
 
-    fun buildResult(frameCount: Int): ScanResult {
+    @Synchronized
+    fun buildResult(frameCount: Int, sharedMesh: PolygonMeshData? = null): ScanResult {
         val dir = framesDir.parentFile ?: root
         val name = dir.name
         val validFrames = frames.filter { it.isFile && it.length() > 0L }
@@ -67,12 +79,18 @@ class ScanSession(private val context: Context, private val profile: DeviceProfi
         val usableDepth = depthMaps.lastOrNull { it.isFile && it.length() > 8L }
             ?: throw IllegalStateException("No usable AI depth map was captured; frames are preserved")
 
-        val maxDimension = when (profile.mode) {
+        val maxDimension = scanSettings?.meshMaxDimension ?: when (profile.mode) {
             ScanMode.LOW_RAM -> 96
             ScanMode.BALANCED -> 160
             ScanMode.PERFORMANCE -> 224
         }
-        val mesh = MeshGenerator.fromDepthMap(usableDepth, maxDimension)
+        // Prefer the exact shared router topology used by the live preview.
+        // Fall back to the saved depth map if the routed mesh is not usable.
+        val mesh = if (sharedMesh != null && sharedMesh.vertices.size >= 12 && sharedMesh.triangleIndices.size >= 6) {
+            MeshGenerator.fromPolygonMesh(sharedMesh)
+        } else {
+            MeshGenerator.fromDepthMap(usableDepth, maxDimension)
+        }
         require(mesh.vertices.size >= 12 && mesh.indices.size >= 6) {
             "AI depth map did not produce a usable surface"
         }
@@ -84,7 +102,7 @@ class ScanSession(private val context: Context, private val profile: DeviceProfi
         require(obj.isFile && obj.length() > 50L) { "OBJ export is incomplete" }
         require(glb.isFile && glb.length() > 100L) { "GLB export is incomplete" }
 
-        val metadata = """{"frames":${validFrames.size},"depthMaps":${depthMaps.count { it.isFile }},"requestedFrameCount":$frameCount,"mode":"${profile.mode}","reconstruction":"single-view-ai-depth-surface","multiViewFusion":"not-yet-implemented","trackingFrames":${tracking.size},"trackingQuality":"${tracking.lastOrNull()?.quality ?: "UNKNOWN"}","obj":"${obj.name}","glb":"${glb.name}"}"""
+        val metadata = """{"frames":${validFrames.size},"depthMaps":${depthMaps.count { it.isFile }},"requestedFrameCount":$frameCount,"mode":"${profile.mode}","scanIntent":"${scanSettings?.intent?.name ?: ScanIntent.AUTO.name}","meshMaxDimension":$maxDimension,"adaptivePressureLevel":${scanSettings?.pressureLevel ?: 0},"reconstruction":"single-view-ai-depth-surface","multiViewFusion":"not-yet-implemented","trackingFrames":${tracking.size},"trackingQuality":"${tracking.lastOrNull()?.quality ?: "UNKNOWN"}","obj":"${obj.name}","glb":"${glb.name}"}"""
         File(dir, "scan.json").writeText(metadata)
         return ScanResult(name, dir, obj, glb)
     }
@@ -93,6 +111,25 @@ class ScanSession(private val context: Context, private val profile: DeviceProfi
 data class Mesh(val vertices: FloatArray, val indices: IntArray)
 
 object MeshGenerator {
+    /** Converts the router's exact vertex/index topology into export coordinates. */
+    fun fromPolygonMesh(source: PolygonMeshData): Mesh {
+        require(source.vertices.size >= 12 && source.vertices.size % 3 == 0) { "Invalid routed mesh vertices" }
+        require(source.triangleIndices.size >= 6 && source.triangleIndices.size % 3 == 0) { "Invalid routed mesh indices" }
+        val vertices = FloatArray(source.vertices.size)
+        var i = 0
+        while (i + 2 < source.vertices.size) {
+            val x = source.vertices[i].coerceIn(0f, 1f)
+            val y = source.vertices[i + 1].coerceIn(0f, 1f)
+            val z = source.vertices[i + 2].coerceIn(0f, 1f)
+            vertices[i] = (x - 0.5f) * 2f
+            vertices[i + 1] = (0.5f - y) * 2f
+            vertices[i + 2] = (z - 0.5f) * 1.2f
+            i += 3
+        }
+        val indices = source.triangleIndices.copyOf()
+        require(indices.all { it in 0 until vertices.size / 3 }) { "Routed mesh contains an invalid index" }
+        return Mesh(vertices, indices)
+    }
     /**
      * Builds a 2.5D surface from an actual saved AI depth map.
      * It intentionally does not fabricate a sphere or claim camera-pose fusion.
@@ -128,23 +165,33 @@ object MeshGenerator {
             }
         }
 
-        val indices = IntArray((outWidth - 1) * (outHeight - 1) * 6)
-        var q = 0
+        // Do not bridge large depth discontinuities: those triangles create
+        // stretched spikes and noisy "curtains" around object silhouettes.
+        // Threshold is in normalized relative-depth units, not metres.
+        val indexBuffer = ArrayList<Int>((outWidth - 1) * (outHeight - 1) * 6)
+        val edgeThreshold = 0.10f
+        fun z(index: Int): Float = vertices[index * 3 + 2]
+        fun addTriangle(a: Int, b: Int, c: Int) {
+            val za = z(a)
+            val zb = z(b)
+            val zc = z(c)
+            if (maxOf(za, zb, zc) - minOf(za, zb, zc) <= edgeThreshold) {
+                indexBuffer.add(a)
+                indexBuffer.add(b)
+                indexBuffer.add(c)
+            }
+        }
         for (y in 0 until outHeight - 1) {
             for (x in 0 until outWidth - 1) {
                 val a = y * outWidth + x
                 val b = a + 1
                 val c = a + outWidth + 1
                 val d = a + outWidth
-                indices[q++] = a
-                indices[q++] = d
-                indices[q++] = b
-                indices[q++] = b
-                indices[q++] = d
-                indices[q++] = c
+                addTriangle(a, d, b)
+                addTriangle(b, d, c)
             }
         }
-        return Mesh(vertices, indices)
+        return Mesh(vertices, indexBuffer.toIntArray())
     }
 }
 
