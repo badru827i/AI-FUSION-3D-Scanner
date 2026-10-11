@@ -124,6 +124,28 @@ class Scan3DPreviewView @JvmOverloads constructor(
         if (previous != null && previous !== value && !previous.isRecycled) previous.recycle()
     }
 
+    /** Loads a saved OBJ mesh for the completed-model viewer. Vertices are normalised xyz triples. */
+    fun setSavedModelMesh(vertices: FloatArray, triangleIndices: IntArray) {
+        if (vertices.size < 12 || vertices.size % 3 != 0 || triangleIndices.size < 6 || triangleIndices.size % 3 != 0) {
+            clear()
+            return
+        }
+        val maxIndex = vertices.size / 3 - 1
+        if (triangleIndices.any { it !in 0..maxIndex }) {
+            clear()
+            return
+        }
+        replaceBitmap(Bitmap.createBitmap(2, 2, Bitmap.Config.ARGB_8888))
+        routedMesh = PolygonMeshData(vertices.copyOf(), triangleIndices.copyOf(), 2, vertices.size / 6)
+        coverage = null
+        aiDepth = true
+        live = false
+        focusLocked = false
+        trackingFound = true
+        visibility = View.VISIBLE
+        invalidate()
+    }
+
     fun setCompleted() {
         live = false
         focusLocked = false
