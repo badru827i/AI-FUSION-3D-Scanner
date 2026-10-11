@@ -107,6 +107,22 @@ class MainActivity : ComponentActivity() {
                 controlsPanel.alpha = 0f
                 controlsPanel.translationY = 34f
                 controlsPanel.rotation = -2f
+                // Reveal controls in sequence: rise, fade and a tiny rotation.
+                for (i in 0 until controlsPanel.childCount) {
+                    val item = controlsPanel.getChildAt(i)
+                    item.alpha = 0f
+                    item.translationY = 18f
+                    item.rotation = if (i % 2 == 0) -2f else 2f
+                    item.animate().cancel()
+                    item.animate()
+                        .alpha(1f)
+                        .translationY(0f)
+                        .rotation(0f)
+                        .setStartDelay(i * 42L)
+                        .setDuration(210L)
+                        .setInterpolator(android.view.animation.DecelerateInterpolator())
+                        .start()
+                }
                 controlsPanel.animate().cancel()
                 controlsPanel.animate()
                     .alpha(1f)
