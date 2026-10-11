@@ -17,8 +17,10 @@ class ScanSession(private val context: Context, private val profile: DeviceProfi
     private val frames = mutableListOf<File>()
     private val tracking = mutableListOf<TrackingSnapshot>()
     private val depthMaps = mutableListOf<File>()
+    private var scanSettings: AdaptiveScanSettings? = null
 
-    fun start() {
+    fun start(settings: AdaptiveScanSettings? = null) {
+        scanSettings = settings
         val sessionDir = File(root, "scan_${System.currentTimeMillis()}")
         framesDir = File(sessionDir, "frames")
         if (!framesDir.mkdirs() && !framesDir.isDirectory) {
@@ -67,7 +69,7 @@ class ScanSession(private val context: Context, private val profile: DeviceProfi
         val usableDepth = depthMaps.lastOrNull { it.isFile && it.length() > 8L }
             ?: throw IllegalStateException("No usable AI depth map was captured; frames are preserved")
 
-        val maxDimension = when (profile.mode) {
+        val maxDimension = scanSettings?.meshMaxDimension ?: when (profile.mode) {
             ScanMode.LOW_RAM -> 96
             ScanMode.BALANCED -> 160
             ScanMode.PERFORMANCE -> 224
@@ -84,7 +86,7 @@ class ScanSession(private val context: Context, private val profile: DeviceProfi
         require(obj.isFile && obj.length() > 50L) { "OBJ export is incomplete" }
         require(glb.isFile && glb.length() > 100L) { "GLB export is incomplete" }
 
-        val metadata = """{"frames":${validFrames.size},"depthMaps":${depthMaps.count { it.isFile }},"requestedFrameCount":$frameCount,"mode":"${profile.mode}","reconstruction":"single-view-ai-depth-surface","multiViewFusion":"not-yet-implemented","trackingFrames":${tracking.size},"trackingQuality":"${tracking.lastOrNull()?.quality ?: "UNKNOWN"}","obj":"${obj.name}","glb":"${glb.name}"}"""
+        val metadata = """{"frames":${validFrames.size},"depthMaps":${depthMaps.count { it.isFile }},"requestedFrameCount":$frameCount,"mode":"${profile.mode}","scanIntent":"${scanSettings?.intent?.name ?: ScanIntent.AUTO.name}","meshMaxDimension":$maxDimension,"adaptivePressureLevel":${scanSettings?.pressureLevel ?: 0},"reconstruction":"single-view-ai-depth-surface","multiViewFusion":"not-yet-implemented","trackingFrames":${tracking.size},"trackingQuality":"${tracking.lastOrNull()?.quality ?: "UNKNOWN"}","obj":"${obj.name}","glb":"${glb.name}"}"""
         File(dir, "scan.json").writeText(metadata)
         return ScanResult(name, dir, obj, glb)
     }
