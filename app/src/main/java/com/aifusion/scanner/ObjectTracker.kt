@@ -36,6 +36,7 @@ class ObjectTracker {
     private var velocityX = 0f
     private var velocityY = 0f
     private var smoothedScore = 0f
+    private val filterStack = TrackingFilterStack()
 
     fun isActive(): Boolean = active
 
@@ -50,6 +51,7 @@ class ObjectTracker {
         velocityX = 0f
         velocityY = 0f
         smoothedScore = 0f
+        filterStack.reset()
         active = false
     }
 
@@ -78,6 +80,7 @@ class ObjectTracker {
         velocityX = 0f
         velocityY = 0f
         smoothedScore = 0f
+        filterStack.reset(centerX, centerY)
         active = patch.isNotEmpty()
     }
 
@@ -211,16 +214,27 @@ class ObjectTracker {
         val deltaX = (targetX - centerX).coerceIn(-0.18f, 0.18f)
         val deltaY = (targetY - centerY).coerceIn(-0.18f, 0.18f)
         val deltaMagnitude = sqrt(deltaX * deltaX + deltaY * deltaY)
-        // Confidence-aware smoothing damps small jitter but still follows a real move.
-        val follow = when {
-            bestVisualScore >= 0.88f -> if (deltaMagnitude > 0.035f) 0.40f else 0.22f
-            bestVisualScore >= 0.78f -> 0.29f
-            else -> 0.21f
+
+        // Multi-layer router: confidence gate, median, outlier rejection, adaptive
+        // EMA and bounded motion prediction. Never advance the template on a rejected point.
+        val filtered = filterStack.process(
+            targetX, targetY, bestVisualScore, width, height, wasRecovering
+        )
+        if (filtered.rejected) {
+            misses++
+            velocityX *= 0.55f
+            velocityY *= 0.55f
+            return ObjectTrackResult(
+                centerX, centerY, smoothedScore, false, misses,
+                patchW / (width - 1f), patchH / (height - 1f)
+            )
         }
-        centerX = (centerX + deltaX * follow).coerceIn(0f, 1f)
-        centerY = (centerY + deltaY * follow).coerceIn(0f, 1f)
-        velocityX = (velocityX * 0.70f + deltaX * 0.30f).coerceIn(-0.08f, 0.08f)
-        velocityY = (velocityY * 0.70f + deltaY * 0.30f).coerceIn(-0.08f, 0.08f)
+        centerX = filtered.x
+        centerY = filtered.y
+        velocityX = (velocityX * 0.70f + (centerX - previousX / (width - 1f)) * 0.30f)
+            .coerceIn(-0.08f, 0.08f)
+        velocityY = (velocityY * 0.70f + (centerY - previousY / (height - 1f)) * 0.30f)
+            .coerceIn(-0.08f, 0.08f)
         smoothedScore = if (smoothedScore <= 0f) bestVisualScore else smoothedScore * 0.65f + bestVisualScore * 0.35f
 
         val moved = sqrt(
