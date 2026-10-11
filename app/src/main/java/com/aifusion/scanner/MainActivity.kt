@@ -45,7 +45,9 @@ class MainActivity : ComponentActivity() {
     private lateinit var deviceStatus: TextView
     private lateinit var scanStatus: TextView
     private lateinit var startButton: Button
-    private lateinit var trackingLockButton: Button
+    private lateinit var scanModeButton: Button
+    private lateinit var adaptiveScan: AdaptiveScanController
+    private lateinit var trackingLockButton
     private lateinit var miniPreview: Scan3DPreviewView
     private lateinit var trackingOverlay: TrackingOverlayView
     private lateinit var hologramOverlay: HologramAnalysisOverlayView
@@ -89,6 +91,7 @@ class MainActivity : ComponentActivity() {
         deviceStatus = findViewById(R.id.deviceStatus)
         scanStatus = findViewById(R.id.scanStatus)
         startButton = findViewById(R.id.startScan)
+        scanModeButton = findViewById(R.id.scanMode)
         trackingLockButton = findViewById(R.id.trackingLock)
         trackingLockButton.setOnClickListener {
             if (objectTracker.isActive()) {
@@ -115,6 +118,22 @@ class MainActivity : ComponentActivity() {
         coverageText.visibility = View.GONE
 
         profile = SmartDeviceEngine.detect(this)
+        adaptiveScan = AdaptiveScanController(profile)
+        scanModeButton.text = "Scan: " + adaptiveScan.statusLabel()
+        scanModeButton.setOnClickListener {
+            if (scanning || reconstructing) {
+                Toast.makeText(this, "Finish the current scan before changing mode", Toast.LENGTH_SHORT).show()
+            } else {
+                adaptiveScan.cycleIntent()
+                miniPreview.setScanIntent(adaptiveScan.selectedIntent)
+                scanModeButton.text = "Scan: " + adaptiveScan.statusLabel()
+                scanStatus.text = adaptiveScan.statusLabel() + " selected • local adaptive scanning"
+                if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+                    startCamera()
+                }
+            }
+        }
+        miniPreview.setScanIntent(adaptiveScan.selectedIntent)
         tracker = CameraTracking(this, profile)
         coverage = ScanCoverage()
         scanSession = ScanSession(this, profile)
@@ -166,11 +185,17 @@ class MainActivity : ComponentActivity() {
             imageCapture = ImageCapture.Builder()
                 .setResolutionSelector(fhdSelector)
                 .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
-                .setJpegQuality(if (profile.mode == ScanMode.LOW_RAM) 75 else 92)
+                .setJpegQuality(adaptiveScan.settings().jpegQuality)
                 .build()
             // Keep AI analysis intentionally smaller so FHD preview does not overload RAM/CPU.
             imageAnalysis = ImageAnalysis.Builder()
-                .setTargetResolution(if (profile.mode == ScanMode.LOW_RAM) Size(640, 360) else Size(960, 540))
+                .setTargetResolution(
+                    if (profile.mode == ScanMode.LOW_RAM || adaptiveScan.selectedIntent == ScanIntent.LARGE_COVERAGE) {
+                        Size(640, 360)
+                    } else {
+                        Size(960, 540)
+                    }
+                )
                 .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                 .setImageQueueDepth(1)
                 .build()
@@ -179,14 +204,16 @@ class MainActivity : ComponentActivity() {
                 }
             provider.unbindAll()
             provider.bindToLifecycle(this, CameraSelector.DEFAULT_BACK_CAMERA, preview, imageCapture, imageAnalysis)
-            scanStatus.text = "Camera ready • point at the object"
+            scanStatus.text = "Camera ready • " + adaptiveScan.statusLabel() + " mode • point at the object"
         }, ContextCompat.getMainExecutor(this))
     }
 
     private fun startScan() {
         if (reconstructing || captureInFlight) return
+        adaptiveScan.beginScan()
+        val scanSettings = adaptiveScan.settings()
         try {
-            scanSession.start()
+            scanSession.start(scanSettings)
         } catch (t: Throwable) {
             scanStatus.text = "Cannot start scan: " + (t.message ?: "storage unavailable")
             return
@@ -215,7 +242,7 @@ class MainActivity : ComponentActivity() {
         startButton.isEnabled = true
         startButton.text = "Stop 3D Scan"
         coverageText.text = "0% covered • LIVE"
-        scanStatus.text = "AI Depth " + depthAi.backend + " • tap object to lock • frames: 0"
+        scanStatus.text = adaptiveScan.statusLabel() + " • AI Depth " + depthAi.backend + " • tap object to lock • frames: 0"
         captureFrame()
     }
 
@@ -242,8 +269,7 @@ class MainActivity : ComponentActivity() {
                         }
                         recordCapturedFrame(file)
                         if (scanning) {
-                            val delay = if (profile.mode == ScanMode.LOW_RAM) 1200L else 850L
-                            previewHandler.postDelayed({ captureFrame() }, delay)
+                            previewHandler.postDelayed({ captureFrame() }, adaptiveScan.settings().captureIntervalMs)
                         }
                     }
 
@@ -397,11 +423,7 @@ class MainActivity : ComponentActivity() {
         }
 
         // Depth is intentionally less frequent; it must not block the tracking updates above.
-        val depthInterval = when (profile.mode) {
-            ScanMode.LOW_RAM -> 1100L
-            ScanMode.BALANCED -> 650L
-            ScanMode.PERFORMANCE -> 450L
-        }
+        val depthInterval = adaptiveScan.settings().depthIntervalMs
         if (now - lastPreviewMs < depthInterval || !depthInFlight.compareAndSet(false, true)) {
             bitmap.recycle()
             return
@@ -426,6 +448,7 @@ class MainActivity : ComponentActivity() {
         var outputBitmap: Bitmap? = null
         try {
             val result = depthAi.estimate(bitmap)
+            adaptiveScan.observeDepthInference(result.inferenceMs)
             val stableDepth = synchronized(temporalDepthLock) {
                 temporalDepth.filter(
                     result.depth,
@@ -451,14 +474,18 @@ class MainActivity : ComponentActivity() {
                     )
                     coverageText.visibility = View.VISIBLE
                     coverageText.text = coverage.percent().toString() + "% covered • AI depth • " + result.inferenceMs + "ms"
+                    val runtimeSettings = adaptiveScan.settings()
+                    val pressureNote = if (runtimeSettings.pressureLevel > 0) " • adaptive throttle ${runtimeSettings.pressureLevel}" else ""
                     scanStatus.text = when {
                         objectLockActive && !track.tracked ->
                             "TARGET LOST • hold still and reveal the same object • relocalising"
                         objectLockActive ->
-                            "TARGET LOCKED • confidence " + (track.score * 100f).toInt().coerceIn(0, 100) +
-                                "% • AI Depth " + result.inferenceMs + "ms"
+                            adaptiveScan.statusLabel() + " • TARGET LOCKED • confidence " +
+                                (track.score * 100f).toInt().coerceIn(0, 100) + "% • AI Depth " +
+                                result.inferenceMs + "ms" + pressureNote
                         else ->
-                            "AI Depth " + result.backend + " • " + result.inferenceMs + "ms • DEPTH PREVIEW"
+                            adaptiveScan.statusLabel() + " • AI Depth " + result.backend + " • " +
+                                result.inferenceMs + "ms • DEPTH PREVIEW" + pressureNote
                     }
                 } else if (!depthPreview.isRecycled) {
                     depthPreview.recycle()
@@ -664,7 +691,7 @@ class MainActivity : ComponentActivity() {
                     if (isFinishing || isDestroyed) return@runOnUiThread
                     startButton.isEnabled = true
                     startButton.text = "Start 3D Scan"
-                    scanStatus.text = "Depth mesh exported • " + savedFrameCount +
+                    scanStatus.text = adaptiveScan.statusLabel() + " • depth mesh exported • " + savedFrameCount +
                         " frames • " + savedCoverage + "% guide coverage • OBJ + GLB"
                     Toast.makeText(this, "Saved: " + result.name, Toast.LENGTH_LONG).show()
                 }
