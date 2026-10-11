@@ -40,6 +40,9 @@
             android:singleLine="true" android:ellipsize="end" android:background="#E60B1018" />
     </LinearLayout>
     <Button
+        android:id="@+id/meshMode" android:layout_width="wrap_content" android:layout_height="wrap_content"
+        android:layout_gravity="bottom|center_horizontal" android:layout_marginBottom="246dp" android:text="Mesh: POLYGON" />
+    <Button
         android:id="@+id/saveModel" android:layout_width="wrap_content" android:layout_height="wrap_content"
         android:layout_gravity="bottom|center_horizontal" android:layout_marginBottom="192dp" android:text="Save 3D Now" />
     <Button
