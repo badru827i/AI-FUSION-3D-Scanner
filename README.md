@@ -39,3 +39,7 @@ The scan modes change the sampling, preview and mesh budget used by the current 
 ## Build
 
 The GitHub Actions workflow downloads and checksum-verifies the MiDaS TFLite model, builds the Android debug APK with JDK 17 / Gradle, and publishes the APK as a workflow artifact. The model is fetched during CI rather than included as a binary in Git.
+
+### Live 3D checkpoint saving
+
+During a scan, use **Save 3D Now** to export the latest usable AI depth surface to the current scan session as OBJ and GLB without stopping capture. The button reports when the first usable depth map is not ready yet. Checkpoint export is serialized with scan-session writes to reduce file-list races; the final scan export still runs when scanning is stopped. The saved geometry remains a single-view relative-depth surface, not a fused full-object scan.
