@@ -84,6 +84,7 @@ class Scan3DPreviewView @JvmOverloads constructor(
 
     fun setPreview(value: Bitmap, scanCoverage: ScanCoverage) {
         replaceBitmap(value)
+        routedMesh = null
         coverage = scanCoverage
         aiDepth = false
         live = false
