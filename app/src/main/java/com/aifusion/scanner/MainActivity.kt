@@ -41,6 +41,9 @@ class MainActivity : ComponentActivity() {
     private lateinit var miniPreview: Scan3DPreviewView
     private lateinit var trackingOverlay: TrackingOverlayView
     private lateinit var hologramOverlay: HologramAnalysisOverlayView
+    private lateinit var denseTrackingView: TrackingPointsView
+    private lateinit var denseTrackingButton: Button
+    @Volatile private var denseTrackingMode = false
     private val objectTracker = ObjectTracker()
     @Volatile private var pendingTargetX: Float? = null
     @Volatile private var pendingTargetY: Float? = null
@@ -93,6 +96,23 @@ class MainActivity : ComponentActivity() {
         miniPreview.visibility = View.GONE
         trackingOverlay = findViewById(R.id.trackingOverlay)
         hologramOverlay = findViewById(R.id.hologramOverlay)
+        denseTrackingView = findViewById(R.id.denseTrackingView)
+        denseTrackingButton = findViewById(R.id.denseTrackingButton)
+        denseTrackingView.visibility = View.GONE
+        denseTrackingButton.setOnClickListener {
+            denseTrackingMode = true
+            lastPreviewMs = 0L
+            denseTrackingView.visibility = View.VISIBLE
+            denseTrackingButton.visibility = View.GONE
+            scanStatus.text = "Dense tracking active • extracting live image features"
+        }
+        denseTrackingView.onClose = {
+            denseTrackingMode = false
+            denseTrackingView.visibility = View.GONE
+            denseTrackingView.clearPoints()
+            denseTrackingButton.visibility = View.VISIBLE
+            scanStatus.text = if (scanning) "3D scan running" else "Camera ready • point at the object"
+        }
         trackingOverlay.onTargetSelected = { x, y ->
             pendingTargetX = x
             pendingTargetY = y
@@ -287,12 +307,14 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun analyzeLiveFrame(image: ImageProxy) {
-        if (!scanning) {
+        if (!scanning && !denseTrackingMode) {
             image.close()
             return
         }
         val now = System.currentTimeMillis()
-        val interval = if (profile.mode == ScanMode.LOW_RAM) 900L else 500L
+        val interval = if (denseTrackingMode) {
+            if (profile.mode == ScanMode.LOW_RAM) 650L else 250L
+        } else if (profile.mode == ScanMode.LOW_RAM) 900L else 500L
         if (now - lastPreviewMs < interval) {
             image.close()
             return
@@ -301,6 +323,11 @@ class MainActivity : ComponentActivity() {
         val bitmap = imageToBitmap(image)
         image.close()
         if (bitmap == null) return
+        if (denseTrackingMode) denseTrackingView.submitFrame(bitmap)
+        if (!scanning) {
+            bitmap.recycle()
+            return
+        }
 
         val requestX = pendingTargetX
         val requestY = pendingTargetY
@@ -431,7 +458,9 @@ class MainActivity : ComponentActivity() {
             )
         val bytes = out.toByteArray()
         val opts = BitmapFactory.Options().apply {
-            inSampleSize = if (profile.mode == ScanMode.LOW_RAM) 16 else 8
+            inSampleSize = if (denseTrackingMode) {
+                if (profile.mode == ScanMode.LOW_RAM) 4 else 2
+            } else if (profile.mode == ScanMode.LOW_RAM) 16 else 8
         }
         return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)
     }
@@ -457,6 +486,10 @@ class MainActivity : ComponentActivity() {
 
     private fun finalizeScan() {
         scanning = false
+        denseTrackingMode = false
+        denseTrackingView.visibility = View.GONE
+        denseTrackingView.clearPoints()
+        denseTrackingButton.visibility = View.VISIBLE
         hologramOverlay.setActive(false)
         tracker.stop()
         temporalDepth.reset()
@@ -508,6 +541,8 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         scanning = false
+        denseTrackingMode = false
+        denseTrackingView.clearPoints()
         hologramOverlay.setActive(false)
         tracker.stop()
         temporalDepth.reset()
