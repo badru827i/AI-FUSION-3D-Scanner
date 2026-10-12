@@ -35,9 +35,16 @@
             android:textColor="#FFFFFFFF" android:textSize="11sp" android:textStyle="bold" android:background="#B20B1015" />
     </LinearLayout>
     <Button
+        android:id="@+id/denseTrackingButton" android:layout_width="wrap_content" android:layout_height="wrap_content"
+        android:layout_gravity="top|end" android:layout_marginTop="76dp" android:layout_marginEnd="14dp"
+        android:text="2K Tracking" />
+    <Button
         android:id="@+id/trackingLock" android:layout_width="wrap_content" android:layout_height="wrap_content"
         android:layout_gravity="bottom|center_horizontal" android:layout_marginBottom="84dp" android:text="Lock Target" />
     <Button
         android:id="@+id/startScan" android:layout_width="wrap_content" android:layout_height="wrap_content"
         android:layout_gravity="bottom|center_horizontal" android:layout_marginBottom="30dp" android:text="Start 3D Scan" />
+    <com.aifusion.scanner.TrackingPointsView
+        android:id="@+id/denseTrackingView" android:layout_width="match_parent" android:layout_height="match_parent"
+        android:visibility="gone" android:clickable="true" android:focusable="true" />
 </FrameLayout>
