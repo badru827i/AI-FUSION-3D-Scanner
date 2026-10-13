@@ -6,6 +6,7 @@ import android.os.SystemClock
 import org.tensorflow.lite.Interpreter
 import org.tensorflow.lite.gpu.CompatibilityList
 import org.tensorflow.lite.gpu.GpuDelegate
+import org.tensorflow.lite.nnapi.NnApiDelegate
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import kotlin.math.max
@@ -30,6 +31,7 @@ class DepthAiEngine(
     }
 
     private var gpuDelegate: GpuDelegate? = null
+    private var nnApiDelegate: NnApiDelegate? = null
     private lateinit var interpreter: Interpreter
     var backend: String = "CPU"
         private set
@@ -41,9 +43,29 @@ class DepthAiEngine(
 
         val model = loadModel()
 
-        // Try GPU completely (including tensor allocation). Some devices expose a
-        // GPU delegate but fail during allocation, so CPU fallback must cover that too.
-        if (profile.mode != ScanMode.LOW_RAM) {
+        // Try Android's generic NNAPI interface first. Compatible device drivers
+        // may route operations to an NPU, DSP or GPU; NNAPI does not guarantee NPU use.
+        if (android.os.Build.VERSION.SDK_INT >= 27 && profile.mode != ScanMode.LOW_RAM) {
+            var delegate: NnApiDelegate? = null
+            try {
+                delegate = NnApiDelegate()
+                val nnOptions = Interpreter.Options().apply {
+                    setNumThreads(4)
+                    addDelegate(delegate)
+                }
+                model.rewind()
+                val candidate = Interpreter(model, nnOptions)
+                candidate.allocateTensors()
+                interpreter = candidate
+                nnApiDelegate = delegate
+                backend = "Android NNAPI"
+            } catch (_: Throwable) {
+                try { delegate?.close() } catch (_: Throwable) {}
+            }
+        }
+
+        // If NNAPI initialization fails, try the portable TFLite GPU delegate.
+        if (!::interpreter.isInitialized && profile.mode != ScanMode.LOW_RAM) {
             try {
                 val compatibility = CompatibilityList()
                 if (compatibility.isDelegateSupportedOnThisDevice) {
@@ -159,5 +181,6 @@ class DepthAiEngine(
     override fun close() {
         interpreter.close()
         gpuDelegate?.close()
+        nnApiDelegate?.close()
     }
 }
