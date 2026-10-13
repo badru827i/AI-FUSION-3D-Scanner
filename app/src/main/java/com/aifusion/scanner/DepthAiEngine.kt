@@ -48,16 +48,17 @@ class DepthAiEngine(
         if (android.os.Build.VERSION.SDK_INT >= 27 && profile.mode != ScanMode.LOW_RAM) {
             var delegate: NnApiDelegate? = null
             try {
-                delegate = NnApiDelegate()
+                val nnDelegate = NnApiDelegate()
+                delegate = nnDelegate
                 val nnOptions = Interpreter.Options().apply {
                     setNumThreads(4)
-                    addDelegate(delegate)
+                    addDelegate(nnDelegate)
                 }
                 model.rewind()
                 val candidate = Interpreter(model, nnOptions)
                 candidate.allocateTensors()
                 interpreter = candidate
-                nnApiDelegate = delegate
+                nnApiDelegate = nnDelegate
                 backend = "Android NNAPI"
             } catch (_: Throwable) {
                 try { delegate?.close() } catch (_: Throwable) {}
