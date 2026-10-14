@@ -28,6 +28,7 @@ class ScanExportPipelineTest {
 
         try {
             session.start()
+            outputDirectory = session.framesDir.parentFile
 
             // Deterministic fixture stands in for one captured frame. The test
             // validates the real session/mesh/export pipeline, not camera hardware.
