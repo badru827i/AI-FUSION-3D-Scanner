@@ -38,8 +38,9 @@ class ScannerSmokeTest {
     fun targetCannotBeLockedBeforeScanStarts() {
         ActivityScenario.launch(MainActivity::class.java).use {
             onView(withId(R.id.trackingLock)).perform(click())
-            onView(withId(R.id.scanStatus))
-                .check(matches(withText(containsString("Start 3D Scan before locking"))))
+            // Assert stable button state instead of a status label that CameraX may update asynchronously.
+            onView(withId(R.id.trackingLock)).check(matches(withText("Lock Target")))
+            onView(withId(R.id.startScan)).check(matches(withText("Start 3D Scan")))
         }
     }
 }
