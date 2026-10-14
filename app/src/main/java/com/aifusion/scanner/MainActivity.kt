@@ -507,7 +507,7 @@ class MainActivity : ComponentActivity() {
                     coverageText.text = coverage.percent().toString() + "% • " +
                         dataBlock.processingMs + "ms pipeline"
                     scanStatus.text = "AI Depth " + dataBlock.sequence + " • " +
-                        dataBlock.inferenceMs + "ms inference • " + dataRouter.stats().latestAgeMs + "ms router"
+                        dataBlock.inferenceMs + "ms inference • " + dataRouter.stats().latestAgeMs + "ms packet age"
                 } else {
                     depthBitmap.recycle()
                 }

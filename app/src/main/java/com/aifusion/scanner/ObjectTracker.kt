@@ -55,10 +55,30 @@ class ObjectTracker {
         val y = (ny.coerceIn(0f, 1f) * (bitmap.height - 1)).toInt()
 
         patch = samplePatch(pixels, bitmap.width, bitmap.height, x, y, patchW, patchH)
+
+        // A flat patch has no stable visual features and can produce misleading
+        // high matches on similarly colored areas. Require modest local contrast
+        // before saying the target is locked.
+        if (patch.isEmpty()) {
+            clear()
+            return
+        }
+        val mean = patch.average().toFloat()
+        var variance = 0f
+        for (value in patch) {
+            val delta = value - mean
+            variance += delta * delta
+        }
+        variance /= patch.size.coerceAtLeast(1)
+        if (variance < 0.000025f) {
+            clear()
+            return
+        }
+
         centerX = x / (bitmap.width - 1f)
         centerY = y / (bitmap.height - 1f)
         misses = 0
-        active = patch.isNotEmpty()
+        active = true
     }
 
     fun update(bitmap: Bitmap): ObjectTrackResult {
