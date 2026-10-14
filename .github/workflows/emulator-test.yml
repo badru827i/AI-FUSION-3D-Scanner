@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   emulator-ui-tests:
-    name: Emulator UI smoke tests
+    name: Emulator UI and export-pipeline tests
     runs-on: ubuntu-latest
     timeout-minutes: 45
 
@@ -52,6 +52,7 @@ jobs:
           echo "Verified depth model ($SIZE bytes, SHA256 $SHA)"
 
       - name: Run instrumented tests on Android emulator
+        id: emulator-tests
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 35
@@ -60,15 +61,57 @@ jobs:
           profile: pixel_2
           emulator-options: -no-window -no-audio -no-boot-anim -camera-back emulated
           disable-animations: true
-          script: gradle --no-daemon :app:connectedDebugAndroidTest
+          script: |
+            set +e
+            gradle --no-daemon :app:connectedDebugAndroidTest --stacktrace 2>&1 | tee emulator-test.log
+            TEST_EXIT=${PIPESTATUS[0]}
+            adb logcat -d -v threadtime 2>&1 | tail -n 8000 > emulator-logcat-tail.txt || true
+            printf 'connectedDebugAndroidTest exit code: %s\n' "$TEST_EXIT" > emulator-test-summary.txt
+            echo "## Emulator instrumentation tests" >> "$GITHUB_STEP_SUMMARY"
+            echo "- Command: gradle --no-daemon :app:connectedDebugAndroidTest --stacktrace" >> "$GITHUB_STEP_SUMMARY"
+            echo "- Exit code: $TEST_EXIT" >> "$GITHUB_STEP_SUMMARY"
+            echo "- Commit: $GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
+            exit "$TEST_EXIT"
 
-      - name: Upload emulator test reports
+      - name: Write diagnostic summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "# AI-FUSION Emulator Test Report"
+            echo
+            echo "- Workflow: $GITHUB_WORKFLOW"
+            echo "- Commit: $GITHUB_SHA"
+            echo "- Job status: ${{ job.status }}"
+            echo "- Emulator API: 35 (Google APIs, x86_64)"
+            echo
+            echo "## Result"
+            if [ -f emulator-test-summary.txt ]; then
+              cat emulator-test-summary.txt
+            else
+              echo "The emulator test command did not produce its summary file; inspect the workflow step output."
+            fi
+            echo
+            echo "## Failure clues"
+            if [ -f emulator-test.log ]; then
+              grep -E -i 'failed|failure|exception|error|not found|assertion' emulator-test.log | tail -n 80 || true
+            else
+              echo "No emulator-test.log was created."
+            fi
+          } | tee emulator-test-report.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload emulator test results and diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: AI-FUSION-emulator-test-reports
+          name: AI-FUSION-emulator-test-diagnostics
           path: |
+            emulator-test-report.md
+            emulator-test-summary.txt
+            emulator-test.log
+            emulator-logcat-tail.txt
             app/build/reports/androidTests/**
+            app/build/reports/tests/**
             app/build/outputs/androidTest-results/**
             app/build/test-results/**
           if-no-files-found: warn
