@@ -40,3 +40,12 @@ Current branch work improves the scan pipeline by:
 - recording reconstruction metadata and adding GLB position accessor bounds.
 
 **Important limitation:** the exported geometry is currently a *single-view relative-depth surface* derived from MiDaS output. It is not metric/real-world scale, does not include a projected color texture, and does not yet fuse/align all camera views into a watertight full object. Multi-view pose tracking, depth-map alignment, surface fusion, and on-device validation on multiple phones remain future work. The scanner should not be advertised as a completed photogrammetry solution yet.
+
+
+## Realtime data routing and exports (v0.9.0)
+
+- A latest-frame router packages frame dimensions, gyroscope/accelerometer motion quality, target-tracking result, depth payload, inference time and total analysis time into one bounded snapshot.
+- The router uses a single latest-value slot instead of an unbounded queue. Slow consumers see the newest complete packet rather than building an increasingly stale backlog; old snapshots may be superseded intentionally.
+- The selected target is mapped between the camera preview and the rotated analysis frame using the preview's FILL_CENTER crop. The lock button now arms target selection, confirms a previously selected target, and unlocks an active target.
+- Completed scans produce OBJ, binary glTF (GLB), PLY and scan.json files inside the local scan session. Save OBJ / GLB / PLY opens Android's document picker to copy each file to a user-selected destination.
+- The exported mesh is currently generated from the latest usable monocular relative-depth map. It is still a 2.5D surface rather than calibrated metric depth or a fused, watertight multi-view object. The router and UX changes do not claim that multi-view reconstruction is complete.
