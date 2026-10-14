@@ -1,0 +1,75 @@
+name: AI-FUSION Emulator Test Bot
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ai-fusion-emulator-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  emulator-ui-tests:
+    name: Emulator UI smoke tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      - name: Set up Gradle 8.10.2
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.10.2"
+
+      - name: Download and verify compact depth AI model
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p app/src/main/assets
+          MODEL="app/src/main/assets/midas_small_256_fp16.tflite"
+          URL="https://huggingface.co/litert-community/MiDaS-small/resolve/main/midas_small_256_fp16.tflite?download=true"
+          curl --fail --show-error --location --retry 5 --retry-delay 2 --connect-timeout 20 --max-time 300 -o "$MODEL" "$URL"
+          test -s "$MODEL"
+          SIZE=$(stat -c%s "$MODEL")
+          test "$SIZE" -eq 33507904
+          SHA=$(sha256sum "$MODEL" | cut -d' ' -f1)
+          test "$SHA" = "bec9bce704789e504ec306196fcb0aabe90fd25c2b9d7db382339741950890ca"
+          echo "Verified depth model ($SIZE bytes, SHA256 $SHA)"
+
+      - name: Run instrumented tests on Android emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_2
+          emulator-options: -no-window -no-audio -no-boot-anim -camera-back emulated
+          disable-animations: true
+          script: gradle --no-daemon :app:connectedDebugAndroidTest
+
+      - name: Upload emulator test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: AI-FUSION-emulator-test-reports
+          path: |
+            app/build/reports/androidTests/**
+            app/build/outputs/androidTest-results/**
+            app/build/test-results/**
+          if-no-files-found: warn
+          retention-days: 14
