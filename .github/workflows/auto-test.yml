@@ -1,0 +1,81 @@
+name: AI-FUSION Auto Test Bot
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ai-fusion-auto-test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  android-checks:
+    name: Build, unit tests, lint and APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      - name: Set up Gradle 8.10.2
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.10.2"
+
+      - name: Download and verify compact depth AI model
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p app/src/main/assets
+          MODEL="app/src/main/assets/midas_small_256_fp16.tflite"
+          URL="https://huggingface.co/litert-community/MiDaS-small/resolve/main/midas_small_256_fp16.tflite?download=true"
+          curl --fail --show-error --location --retry 5 --retry-delay 2 --connect-timeout 20 --max-time 300 -o "$MODEL" "$URL"
+          test -s "$MODEL"
+          SIZE=$(stat -c%s "$MODEL")
+          test "$SIZE" -eq 33507904
+          SHA=$(sha256sum "$MODEL" | cut -d' ' -f1)
+          test "$SHA" = "bec9bce704789e504ec306196fcb0aabe90fd25c2b9d7db382339741950890ca"
+          echo "Verified depth model ($SIZE bytes, SHA256 $SHA)"
+
+      - name: Run Kotlin/Android unit tests
+        run: gradle --no-daemon :app:testDebugUnitTest
+
+      - name: Run Android lint
+        run: gradle --no-daemon :app:lintDebug
+
+      - name: Build debug APK
+        run: gradle --no-daemon :app:assembleDebug
+
+      - name: Upload APK
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: AI-FUSION-3D-Scanner-auto-tested-debug
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload test and lint reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: AI-FUSION-auto-test-reports
+          path: |
+            app/build/reports/**
+            app/build/test-results/**
+          if-no-files-found: warn
+          retention-days: 14
