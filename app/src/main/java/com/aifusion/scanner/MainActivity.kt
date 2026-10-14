@@ -2,9 +2,11 @@ package com.aifusion.scanner
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.ImageFormat
+import android.graphics.Matrix
 import android.graphics.Rect
 import android.graphics.YuvImage
 import android.os.Bundle
@@ -12,11 +14,14 @@ import android.os.SystemClock
 import android.os.Handler
 import android.os.Looper
 import android.widget.Button
+import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import android.util.Size
 import android.view.View
 import androidx.activity.ComponentActivity
+import androidx.activity.result.ActivityResultLauncher
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageCapture
@@ -28,6 +33,7 @@ import androidx.camera.view.PreviewView
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import java.io.ByteArrayOutputStream
+import java.io.IOException
 import java.io.File
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
@@ -43,10 +49,28 @@ class MainActivity : ComponentActivity() {
     private lateinit var hologramOverlay: HologramAnalysisOverlayView
     private lateinit var denseTrackingView: TrackingPointsView
     private lateinit var denseTrackingButton: Button
+    private lateinit var exportActions: LinearLayout
+    private lateinit var exportObjButton: Button
+    private lateinit var exportGlbButton: Button
+    private lateinit var exportPlyButton: Button
     @Volatile private var denseTrackingMode = false
+    @Volatile private var lockSelectionArmed = false
+    @Volatile private var lockRequested = false
     private val objectTracker = ObjectTracker()
+    private val dataRouter = RealtimeDataRouter()
     @Volatile private var pendingTargetX: Float? = null
     @Volatile private var pendingTargetY: Float? = null
+    private var currentResult: ScanResult? = null
+    private var pendingExportFile: File? = null
+    private val objExportLauncher = registerForActivityResult(ActivityResultContracts.CreateDocument("text/plain")) {
+        handleExportResult(it)
+    }
+    private val glbExportLauncher = registerForActivityResult(ActivityResultContracts.CreateDocument("model/gltf-binary")) {
+        handleExportResult(it)
+    }
+    private val plyExportLauncher = registerForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) {
+        handleExportResult(it)
+    }
     private lateinit var coverageText: TextView
     private lateinit var profile: DeviceProfile
     private lateinit var imageCapture: ImageCapture
@@ -80,16 +104,48 @@ class MainActivity : ComponentActivity() {
         scanStatus = findViewById(R.id.scanStatus)
         startButton = findViewById(R.id.startScan)
         trackingLockButton = findViewById(R.id.trackingLock)
+        exportActions = findViewById(R.id.exportActions)
+        exportObjButton = findViewById(R.id.exportObj)
+        exportGlbButton = findViewById(R.id.exportGlb)
+        exportPlyButton = findViewById(R.id.exportPly)
+        exportActions.visibility = View.GONE
+        exportObjButton.setOnClickListener {
+            val result = currentResult
+            if (result == null) scanStatus.text = "Finish a scan first"
+            else requestExport(result.obj, objExportLauncher)
+        }
+        exportGlbButton.setOnClickListener {
+            val result = currentResult
+            if (result == null) scanStatus.text = "Finish a scan first"
+            else requestExport(result.glb, glbExportLauncher)
+        }
+        exportPlyButton.setOnClickListener {
+            val result = currentResult
+            if (result == null) scanStatus.text = "Finish a scan first"
+            else requestExport(result.ply, plyExportLauncher)
+        }
         trackingLockButton.setOnClickListener {
             if (objectTracker.isActive()) {
                 objectTracker.clear()
+                lockSelectionArmed = false
+                lockRequested = false
                 pendingTargetX = null
                 pendingTargetY = null
                 trackingOverlay.clearTarget()
+                hologramOverlay.updateTarget(0.5f, 0.5f, false)
                 trackingLockButton.text = "Lock Target"
-                scanStatus.text = "Tracking unlocked • tap object to lock again"
+                scanStatus.text = "Tracking unlocked • tap a target, then lock it again"
+            } else if (!scanning) {
+                scanStatus.text = "Start 3D Scan before locking a target"
+            } else if (pendingTargetX != null && pendingTargetY != null) {
+                lockRequested = true
+                lockSelectionArmed = false
+                trackingLockButton.text = "Locking…"
+                scanStatus.text = "Lock requested • checking target features…"
             } else {
-                scanStatus.text = if (scanning) "Tap an object in the preview to lock tracking" else "Start scan, then tap an object to lock tracking"
+                lockSelectionArmed = true
+                trackingLockButton.text = "Tap Object…"
+                scanStatus.text = "Lock mode ready • tap the object in the camera view"
             }
         }
         miniPreview = findViewById(R.id.miniPreview)
@@ -116,7 +172,19 @@ class MainActivity : ComponentActivity() {
         trackingOverlay.onTargetSelected = { x, y ->
             pendingTargetX = x
             pendingTargetY = y
-            scanStatus.text = if (scanning) "Target selected • locking object…" else "Target selected • press Start 3D Scan"
+            if (scanning && lockSelectionArmed) {
+                lockSelectionArmed = false
+                lockRequested = true
+                trackingLockButton.text = "Locking…"
+                scanStatus.text = "Target selected • locking on the next analyzed frame"
+            } else {
+                trackingLockButton.text = "Lock Target"
+                scanStatus.text = if (scanning) {
+                    "Target selected • press Lock Target to confirm"
+                } else {
+                    "Start 3D Scan first, then select and lock a target"
+                }
+            }
         }
         coverageText = findViewById(R.id.coverageText)
         coverageText.visibility = View.GONE
@@ -128,7 +196,7 @@ class MainActivity : ComponentActivity() {
         depthAi = DepthAiEngine(this, profile)
         hologramOverlay.setLowPowerMode(profile.mode == ScanMode.LOW_RAM)
 
-        deviceStatus.text = "AI-FUSION • " + SmartDeviceEngine.summary(profile) + " • Depth AI " + depthAi.backend
+        deviceStatus.text = "AI-FUSION • " + SmartDeviceEngine.summary(profile) + " • Depth AI " + depthAi.backend + " • latest-frame router"
         startButton.setOnClickListener { if (!scanning) startScan() else finishScan() }
 
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
@@ -176,6 +244,12 @@ class MainActivity : ComponentActivity() {
             return
         }
         scanning = true
+        currentResult = null
+        exportActions.visibility = View.GONE
+        lockSelectionArmed = false
+        lockRequested = false
+        pendingTargetX = null
+        pendingTargetY = null
         hologramOverlay.setActive(true)
         finishRequested = false
         frameCount = 0
@@ -192,6 +266,10 @@ class MainActivity : ComponentActivity() {
         coverageText.visibility = View.GONE
         tracker.start()
         objectTracker.clear()
+        lockSelectionArmed = false
+        lockRequested = false
+        pendingTargetX = null
+        pendingTargetY = null
         trackingOverlay.clearTarget()
         trackingLockButton.text = "Lock Target"
         temporalDepth.reset()
@@ -320,6 +398,7 @@ class MainActivity : ComponentActivity() {
             return
         }
         lastPreviewMs = now
+        val processingStartNs = SystemClock.elapsedRealtimeNanos()
         val bitmap = imageToBitmap(image)
         image.close()
         if (bitmap == null) return
@@ -331,36 +410,52 @@ class MainActivity : ComponentActivity() {
 
         val requestX = pendingTargetX
         val requestY = pendingTargetY
-        if (requestX != null && requestY != null) {
-            objectTracker.lock(bitmap, requestX, requestY)
+        if (lockRequested && requestX != null && requestY != null) {
+            val framePoint = previewPointToFrame(requestX, requestY, bitmap.width, bitmap.height)
+            objectTracker.lock(bitmap, framePoint.first, framePoint.second)
+            lockRequested = false
             pendingTargetX = null
             pendingTargetY = null
+            val lockCreated = objectTracker.isActive()
             runOnUiThread {
-                if (scanning && objectTracker.isActive()) {
+                if (scanning && lockCreated) {
                     trackingLockButton.text = "Unlock Target"
-                    scanStatus.text = "Object locked • stable tracking + AI depth"
+                    scanStatus.text = "Target locked • confirming visual match…"
                 } else if (scanning) {
                     trackingLockButton.text = "Lock Target"
-                    scanStatus.text = "Target not lockable • tap a clearer feature"
+                    scanStatus.text = "Target could not be locked • tap a textured edge"
                 }
             }
         }
         val track = objectTracker.update(bitmap)
         val objectLockActive = objectTracker.isActive()
-        runOnUiThread { if (scanning) hologramOverlay.updateTarget(track.x, track.y, track.tracked) }
+        val previewTrack = framePointToPreview(track.x, track.y, bitmap.width, bitmap.height)
+        runOnUiThread { if (scanning) hologramOverlay.updateTarget(previewTrack.first, previewTrack.second, track.tracked) }
         runOnUiThread {
             if (scanning && track.tracked) {
-                trackingOverlay.setTarget(track.x, track.y, active = true)
+                trackingOverlay.setTarget(previewTrack.first, previewTrack.second, active = true)
             } else if (scanning && objectTracker.isActive()) {
                 trackingOverlay.setTracking(false)
+                if (track.misses >= 3) {
+                    scanStatus.text = "Tracking limited • keep the target visible while AI searches"
+                }
             }
         }
 
         val snapshot = tracker.snapshot()
         if (snapshot.quality == "TOO_FAST") {
+            val motionBlock = dataRouter.publish(
+                frameWidth = bitmap.width,
+                frameHeight = bitmap.height,
+                tracking = snapshot,
+                target = track,
+                depth = null,
+                inferenceMs = 0L,
+                processingMs = (SystemClock.elapsedRealtimeNanos() - processingStartNs) / 1_000_000L
+            )
             bitmap.recycle()
             runOnUiThread {
-                if (scanning) scanStatus.text = "Move slower • AI depth paused • tracking"
+                if (scanning) scanStatus.text = "Move slower • motion packet #${motionBlock.sequence} • AI depth paused"
             }
             return
         }
@@ -374,29 +469,63 @@ class MainActivity : ComponentActivity() {
                 snapshot.motion,
                 snapshot.quality
             )
+            val dataBlock = dataRouter.publish(
+                frameWidth = bitmap.width,
+                frameHeight = bitmap.height,
+                tracking = snapshot,
+                target = track,
+                depth = RoutedDepthData(
+                    values = stableDepth,
+                    width = result.width,
+                    height = result.height,
+                    capturedAtElapsedMs = SystemClock.elapsedRealtime()
+                ),
+                inferenceMs = result.inferenceMs,
+                processingMs = (SystemClock.elapsedRealtimeNanos() - processingStartNs) / 1_000_000L
+            )
             if (scanning) synchronized(depthLock) {
-                latestDepthData = stableDepth.copyOf()
-                latestDepthWidth = result.width
-                latestDepthHeight = result.height
-                latestDepthElapsedMs = SystemClock.elapsedRealtime()
+                latestDepthData = dataBlock.depth?.values?.copyOf()
+                latestDepthWidth = dataBlock.depth?.width ?: 0
+                latestDepthHeight = dataBlock.depth?.height ?: 0
+                latestDepthElapsedMs = dataBlock.depth?.capturedAtElapsedMs ?: 0L
             }
-            val depthBitmap = depthToBitmap(stableDepth, result.width, result.height)
+            val routedDepth = dataBlock.depth
+            val depthBitmap = depthToBitmap(routedDepth?.values ?: stableDepth, result.width, result.height)
             bitmap.recycle()
             runOnUiThread {
                 if (scanning) {
-                    coverage.update(snapshot)
-                    miniPreview.setDepthPreview(depthBitmap, coverage, track.x, track.y, objectLockActive, track.tracked)
+                    coverage.update(dataBlock.tracking)
+                    miniPreview.setDepthPreview(
+                        depthBitmap,
+                        coverage,
+                        dataBlock.target?.x ?: 0.5f,
+                        dataBlock.target?.y ?: 0.5f,
+                        objectLockActive,
+                        dataBlock.target?.tracked == true
+                    )
                     coverageText.visibility = View.VISIBLE
-                    coverageText.text = coverage.percent().toString() + "% covered • AI depth • " + result.inferenceMs + "ms"
-                    scanStatus.text = "AI Depth " + result.backend + " • " + result.inferenceMs + "ms • DEPTH PREVIEW"
+                    coverageText.text = coverage.percent().toString() + "% • " +
+                        dataBlock.processingMs + "ms pipeline"
+                    scanStatus.text = "AI Depth " + dataBlock.sequence + " • " +
+                        dataBlock.inferenceMs + "ms inference • " + dataRouter.stats().latestAgeMs + "ms packet age"
                 } else {
                     depthBitmap.recycle()
                 }
             }
         } catch (t: Throwable) {
+            val fallbackBlock = dataRouter.publish(
+                frameWidth = bitmap.width,
+                frameHeight = bitmap.height,
+                tracking = snapshot,
+                target = track,
+                depth = null,
+                inferenceMs = 0L,
+                processingMs = (SystemClock.elapsedRealtimeNanos() - processingStartNs) / 1_000_000L
+            )
             bitmap.recycle()
             runOnUiThread {
-                if (scanning) scanStatus.text = "AI Depth fallback • " + (t.message ?: "inference unavailable")
+                if (scanning) scanStatus.text = "Depth fallback • packet " + fallbackBlock.sequence +
+                    " • " + (t.message ?: "inference unavailable")
             }
         }
     }
@@ -462,12 +591,103 @@ class MainActivity : ComponentActivity() {
                 if (profile.mode == ScanMode.LOW_RAM) 4 else 2
             } else if (profile.mode == ScanMode.LOW_RAM) 16 else 8
         }
-        return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)
+        val decoded = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts) ?: return null
+        val rotationDegrees = image.imageInfo.rotationDegrees % 360
+        if (rotationDegrees == 0) return decoded
+        val matrix = Matrix().apply { postRotate(rotationDegrees.toFloat()) }
+        val upright = Bitmap.createBitmap(decoded, 0, 0, decoded.width, decoded.height, matrix, true)
+        if (upright !== decoded) decoded.recycle()
+        return upright
+    }
+
+    /**
+     * PreviewView uses FILL_CENTER. Convert touch coordinates into the visible
+     * camera-frame rectangle so target locking matches the pixels seen on screen.
+     */
+    private fun previewPointToFrame(x: Float, y: Float, frameWidth: Int, frameHeight: Int): Pair<Float, Float> {
+        val viewWidth = previewView.width.coerceAtLeast(1).toFloat()
+        val viewHeight = previewView.height.coerceAtLeast(1).toFloat()
+        val frameAspect = frameWidth.coerceAtLeast(1).toFloat() / frameHeight.coerceAtLeast(1).toFloat()
+        val viewAspect = viewWidth / viewHeight
+        return when {
+            frameAspect > viewAspect -> {
+                val visibleFraction = (viewAspect / frameAspect).coerceIn(0.01f, 1f)
+                (0.5f + (x - 0.5f) * visibleFraction).coerceIn(0f, 1f) to y.coerceIn(0f, 1f)
+            }
+            frameAspect < viewAspect -> {
+                val visibleFraction = (frameAspect / viewAspect).coerceIn(0.01f, 1f)
+                x.coerceIn(0f, 1f) to (0.5f + (y - 0.5f) * visibleFraction).coerceIn(0f, 1f)
+            }
+            else -> x.coerceIn(0f, 1f) to y.coerceIn(0f, 1f)
+        }
+    }
+
+    /** Convert tracker coordinates back into the on-screen FILL_CENTER overlay space. */
+    private fun framePointToPreview(x: Float, y: Float, frameWidth: Int, frameHeight: Int): Pair<Float, Float> {
+        val viewWidth = previewView.width.coerceAtLeast(1).toFloat()
+        val viewHeight = previewView.height.coerceAtLeast(1).toFloat()
+        val frameAspect = frameWidth.coerceAtLeast(1).toFloat() / frameHeight.coerceAtLeast(1).toFloat()
+        val viewAspect = viewWidth / viewHeight
+        return when {
+            frameAspect > viewAspect -> {
+                val visibleFraction = (viewAspect / frameAspect).coerceIn(0.01f, 1f)
+                (0.5f + (x - 0.5f) / visibleFraction).coerceIn(0f, 1f) to y.coerceIn(0f, 1f)
+            }
+            frameAspect < viewAspect -> {
+                val visibleFraction = (frameAspect / viewAspect).coerceIn(0.01f, 1f)
+                x.coerceIn(0f, 1f) to (0.5f + (y - 0.5f) / visibleFraction).coerceIn(0f, 1f)
+            }
+            else -> x.coerceIn(0f, 1f) to y.coerceIn(0f, 1f)
+        }
+    }
+
+    private fun requestExport(file: File, launcher: ActivityResultLauncher<String>) {
+        if (!file.isFile || file.length() <= 0L) {
+            scanStatus.text = "Export file is missing • scan again"
+            return
+        }
+        pendingExportFile = file
+        launcher.launch(file.name)
+    }
+
+    private fun handleExportResult(uri: Uri?) {
+        val source = pendingExportFile
+        pendingExportFile = null
+        if (uri == null) return
+        if (source == null || !source.isFile) {
+            scanStatus.text = "Export source no longer exists"
+            return
+        }
+        exportExecutor.execute {
+            try {
+                val output = contentResolver.openOutputStream(uri, "w")
+                    ?: throw IOException("Cannot open selected destination")
+                source.inputStream().use { input ->
+                    output.use { destination -> input.copyTo(destination) }
+                }
+                runOnUiThread {
+                    if (!isFinishing && !isDestroyed) {
+                        scanStatus.text = "Exported " + source.name
+                        Toast.makeText(this, "Saved " + source.name, Toast.LENGTH_LONG).show()
+                    }
+                }
+            } catch (t: Throwable) {
+                runOnUiThread {
+                    if (!isFinishing && !isDestroyed) {
+                        scanStatus.text = "Export failed • " + (t.message ?: "write error")
+                    }
+                }
+            }
+        }
     }
 
     private fun finishScan() {
         if (reconstructing) return
         scanning = false
+        lockSelectionArmed = false
+        lockRequested = false
+        pendingTargetX = null
+        pendingTargetY = null
         hologramOverlay.setActive(false)
         trackingLockButton.text = "Lock Target"
         if (captureInFlight) {
@@ -508,6 +728,8 @@ class MainActivity : ComponentActivity() {
         }
 
         reconstructing = true
+        currentResult = null
+        exportActions.visibility = View.GONE
         startButton.isEnabled = false
         startButton.text = "Building 3D…"
         scanStatus.text = "Saved " + frameCount + " frames • building depth mesh…"
@@ -521,9 +743,11 @@ class MainActivity : ComponentActivity() {
                     if (isFinishing || isDestroyed) return@runOnUiThread
                     startButton.isEnabled = true
                     startButton.text = "Start 3D Scan"
-                    scanStatus.text = "Depth mesh exported • " + savedFrameCount +
-                        " frames • " + savedCoverage + "% guide coverage • OBJ + GLB"
-                    Toast.makeText(this, "Saved: " + result.name, Toast.LENGTH_LONG).show()
+                    currentResult = result
+                    exportActions.visibility = View.VISIBLE
+                    scanStatus.text = "Model ready • OBJ / GLB / PLY • " + savedFrameCount +
+                        " frames • " + savedCoverage + "% guide coverage"
+                    Toast.makeText(this, "Created 3D files: " + result.name + " • tap an export button to save", Toast.LENGTH_LONG).show()
                 }
             } catch (t: Throwable) {
                 runOnUiThread {
@@ -531,7 +755,9 @@ class MainActivity : ComponentActivity() {
                     if (isFinishing || isDestroyed) return@runOnUiThread
                     startButton.isEnabled = true
                     startButton.text = "Start 3D Scan"
-                    scanStatus.text = "Frames preserved • mesh export failed: " +
+                    currentResult = null
+                    exportActions.visibility = View.GONE
+                    scanStatus.text = "Frames preserved • mesh export failed: "
                         (t.message ?: "AI depth unavailable")
                     Toast.makeText(this, "Scan saved, but no valid depth mesh was exported", Toast.LENGTH_LONG).show()
                 }

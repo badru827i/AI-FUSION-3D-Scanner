@@ -19,13 +19,13 @@ class CameraTracking(context: Context, private val profile: DeviceProfile) : Sen
     private val manager = context.getSystemService(Context.SENSOR_SERVICE) as SensorManager
     private val gyro = manager.getDefaultSensor(Sensor.TYPE_GYROSCOPE)
     private val accel = manager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
-    private var rx = 0f
-    private var ry = 0f
-    private var rz = 0f
-    private var ax = 0f
-    private var ay = 0f
-    private var az = 0f
-    private var running = false
+    @Volatile private var rx = 0f
+    @Volatile private var ry = 0f
+    @Volatile private var rz = 0f
+    @Volatile private var ax = 0f
+    @Volatile private var ay = 0f
+    @Volatile private var az = 0f
+    @Volatile private var running = false
 
     fun start() {
         if (running) return

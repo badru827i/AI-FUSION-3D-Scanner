@@ -31,6 +31,16 @@ class TrackingOverlayView @JvmOverloads constructor(
         invalidate()
     }
 
+    fun setCandidate(x: Float, y: Float) {
+        centerX = x.coerceIn(0f, 1f)
+        centerY = y.coerceIn(0f, 1f)
+        boxW = 0.22f
+        boxH = 0.22f
+        locked = true
+        tracking = false
+        invalidate()
+    }
+
     fun setTracking(active: Boolean) { tracking = active; invalidate() }
     fun clearTarget() { locked = false; tracking = false; invalidate() }
 
@@ -38,7 +48,7 @@ class TrackingOverlayView @JvmOverloads constructor(
         if (event.action == MotionEvent.ACTION_UP) {
             val x = (event.x / width.toFloat()).coerceIn(0f, 1f)
             val y = (event.y / height.toFloat()).coerceIn(0f, 1f)
-            setTarget(x, y)
+            setCandidate(x, y)
             onTargetSelected?.invoke(x, y)
             performClick()
             return true
