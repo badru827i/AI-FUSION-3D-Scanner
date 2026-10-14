@@ -16,7 +16,7 @@ class ScanExportPipelineTest {
     fun recordedFrameAndDepthMapProducePreviewableExportFiles() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val profile = DeviceProfile(
-            totalRamMb = 8192,
+            totalRamMb = 8192L,
             cpuCores = 8,
             abi = "x86_64",
             soc = "Android Emulator",
