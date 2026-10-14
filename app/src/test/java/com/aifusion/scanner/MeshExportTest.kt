@@ -48,10 +48,12 @@ class MeshExportTest {
         }
 
         val plyText = ply.readText()
-        assertTrue(plyText.startsWith("ply\\nformat ascii 1.0\\n"))
-        assertTrue(plyText.contains("element vertex 64\\n"))
-        assertTrue(plyText.contains("element face 98\\n"))
-        assertTrue(plyText.contains("end_header\\n"))
+        val plyHeader = plyText.lineSequence().takeWhile { it != "end_header" }.toList()
+        assertEquals("ply", plyHeader.first())
+        assertTrue(plyHeader.contains("format ascii 1.0"))
+        assertTrue(plyHeader.contains("element vertex 64"))
+        assertTrue(plyHeader.contains("element face 98"))
+        assertTrue(plyText.contains("end_header"))
 
         val glbBytes = glb.readBytes()
         assertTrue("GLB must contain a header", glbBytes.size >= 20)
