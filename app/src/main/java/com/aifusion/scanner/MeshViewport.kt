@@ -24,10 +24,6 @@ class MeshViewport(context: Context) : GLSurfaceView(context) {
         setEGLContextClientVersion(2)
         setRenderer(meshRenderer)
         renderMode = RENDERMODE_CONTINUOUSLY
-        set背景Color()
-    }
-
-    private fun set背景Color() {
         setBackgroundColor(0xFF080F20.toInt())
     }
 
