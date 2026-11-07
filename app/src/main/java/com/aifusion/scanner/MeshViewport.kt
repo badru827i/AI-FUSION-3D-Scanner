@@ -31,7 +31,7 @@ class MeshViewport(context: Context) : GLSurfaceView(context) {
         setBackgroundColor(0xFF080F20.toInt())
     }
 
-    fun addDemoCoverage() = meshRenderer.addCoverage()
+    fun addDemoCoverage() = queueEvent { meshRenderer.addCoverage() }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
         when (event.actionMasked) {
