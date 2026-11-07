@@ -1,8 +1,10 @@
 <resources>
-    <style name="Theme.AIFusionScanner" parent="Theme.Material3.DayNight.NoActionBar">
-        <item name="android:fontFamily">sans</item>
-        <item name="android:windowLightStatusBar">true</item>
-        <item name="android:statusBarColor">#FFFFFF</item>
-        <item name="android:navigationBarColor">#FFFFFF</item>
+    <style name="Theme.AIFusionScanner" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+        <item name="colorPrimary">#526BFF</item>
+        <item name="colorPrimaryVariant">#263A9B</item>
+        <item name="colorSecondary">#9A65FF</item>
+        <item name="android:statusBarColor">#101426</item>
+        <item name="android:navigationBarColor">#101426</item>
+        <item name="android:windowLightStatusBar">false</item>
     </style>
 </resources>
