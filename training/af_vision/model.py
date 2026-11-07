@@ -56,6 +56,7 @@ class AFVisionMAX(nn.Module):
         self.stem = nn.Sequential(
             ConvNormAct(3, width // 2, 2),
             ConvNormAct(width // 2, width, 2),
+            ConvNormAct(width, width, 2),  # keep attention token count bounded for mobile inference
         )
         self.context = nn.Sequential(*[AFVisionBlock(width) for _ in range(blocks)])
         self.depth_head = nn.Sequential(
