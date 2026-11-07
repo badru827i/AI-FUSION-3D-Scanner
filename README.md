@@ -49,3 +49,16 @@ Current branch work improves the scan pipeline by:
 - The selected target is mapped between the camera preview and the rotated analysis frame using the preview's FILL_CENTER crop. The lock button now arms target selection, confirms a previously selected target, and unlocks an active target.
 - Completed scans produce OBJ, binary glTF (GLB), PLY and scan.json files inside the local scan session. Save OBJ / GLB / PLY opens Android's document picker to copy each file to a user-selected destination.
 - The exported mesh is currently generated from the latest usable monocular relative-depth map. It is still a 2.5D surface rather than calibrated metric depth or a fused, watertight multi-view object. The router and UX changes do not claim that multi-view reconstruction is complete.
+
+
+## AF-Vision MAX — custom depth AI (research scaffold)
+
+The first PyTorch model/training scaffold is now in `training/af_vision/`:
+- compact RGB-to-relative-depth network;
+- paired RGB/depth dataset loader and training loop;
+- held-out validation loss and tensor contract test;
+- guarded TorchAO INT4 weight-only script for eligible Linear layers.
+
+See [AF-Vision training guide](training/af_vision/README.md), [4-bit model specification](docs/AF_VISION_MAX_4BIT_MODEL_SPEC.md), and [implementation status](docs/AF_VISION_MAX_IMPLEMENTATION_STATUS.md).
+
+**Status is intentionally explicit:** architecture and training code are committed, but no dataset has been added, no training run or INT4 quantization has been completed, and no trained weights have been integrated into the Android APK. The current scaffold predicts single-image relative depth; calibrated stereo/metric depth and multi-view fusion remain separate engineering milestones.
