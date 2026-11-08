@@ -244,6 +244,9 @@ class MainActivity : ComponentActivity() {
             return
         }
         scanning = true
+        denseTrackingMode = false
+        denseTrackingView.visibility = View.GONE
+        denseTrackingView.clearPoints()
         currentResult = null
         exportActions.visibility = View.GONE
         lockSelectionArmed = false
