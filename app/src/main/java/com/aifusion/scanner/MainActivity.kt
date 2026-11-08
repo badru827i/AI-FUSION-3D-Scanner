@@ -196,7 +196,7 @@ class MainActivity : ComponentActivity() {
         depthAi = DepthAiEngine(this, profile)
         hologramOverlay.setLowPowerMode(profile.mode == ScanMode.LOW_RAM)
 
-        deviceStatus.text = "AI-FUSION • " + SmartDeviceEngine.summary(profile) + " • Depth AI " + depthAi.backend + " • " + CameraCapabilityProbe.summary(this)"
+        deviceStatus.text = "AI-FUSION • " + SmartDeviceEngine.summary(profile) + " • Depth AI " + depthAi.backend + " • " + CameraCapabilityProbe.summary(this)
         startButton.setOnClickListener { if (!scanning) startScan() else finishScan() }
 
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
