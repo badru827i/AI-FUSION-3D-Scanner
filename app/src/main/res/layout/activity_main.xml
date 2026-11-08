@@ -29,6 +29,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_gravity="top"
+        android:elevation="10dp"
         android:layout_marginStart="10dp"
         android:layout_marginTop="10dp"
         android:layout_marginEnd="10dp"
@@ -62,32 +63,30 @@
             android:textSize="12sp" />
     </LinearLayout>
 
-    <LinearLayout
-        android:layout_width="238dp"
+    <com.aifusion.scanner.Scan3DPreviewView
+        android:id="@+id/miniPreview"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:elevation="1dp"
+        android:visibility="gone" />
+
+    <TextView
+        android:id="@+id/coverageText"
+        android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_gravity="center"
-        android:background="@drawable/bg_glass_panel"
-        android:elevation="6dp"
-        android:orientation="vertical"
-        android:padding="8dp">
-
-        <com.aifusion.scanner.Scan3DPreviewView
-            android:id="@+id/miniPreview"
-            android:layout_width="match_parent"
-            android:layout_height="218dp" />
-
-        <TextView
-            android:id="@+id/coverageText"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:background="#B20B1015"
-            android:gravity="center"
-            android:padding="5dp"
-            android:text="0% • READY"
-            android:textColor="#FFFFFFFF"
-            android:textSize="11sp"
-            android:textStyle="bold" />
-    </LinearLayout>
+        android:layout_gravity="bottom|center_horizontal"
+        android:layout_marginBottom="150dp"
+        android:background="#D90B1015"
+        android:elevation="10dp"
+        android:gravity="center"
+        android:paddingStart="14dp"
+        android:paddingTop="7dp"
+        android:paddingEnd="14dp"
+        android:paddingBottom="7dp"
+        android:text="0% • READY"
+        android:textColor="#FFFFFFFF"
+        android:textSize="12sp"
+        android:textStyle="bold" />
 
     <Button
         android:id="@+id/denseTrackingButton"
@@ -96,6 +95,7 @@
         android:layout_gravity="top|end"
         android:layout_marginTop="94dp"
         android:layout_marginEnd="12dp"
+        android:elevation="10dp"
         android:backgroundTint="#D9182530"
         android:minHeight="44dp"
         android:text="Dense Track"
@@ -157,6 +157,7 @@
         android:layout_height="wrap_content"
         android:layout_gravity="bottom|center_horizontal"
         android:layout_marginBottom="82dp"
+        android:elevation="10dp"
         android:backgroundTint="#D9182530"
         android:text="Lock Target"
         android:textAllCaps="false"
@@ -168,6 +169,7 @@
         android:layout_height="wrap_content"
         android:layout_gravity="bottom|center_horizontal"
         android:layout_marginBottom="24dp"
+        android:elevation="10dp"
         android:backgroundTint="#FF197A72"
         android:minHeight="48dp"
         android:text="Start 3D Scan"
