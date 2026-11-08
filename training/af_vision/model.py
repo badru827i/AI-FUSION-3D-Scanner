@@ -1,81 +1,128 @@
-"""AF-Vision MAX research model.
+"""AF-Vision MAX v2: efficient multi-scale relative-depth network.
 
-This is an untrained architecture scaffold. It predicts relative depth and
-confidence from RGB input; it is not a metric-depth or stereo model yet.
+This is an architecture scaffold, not trained weights. It predicts relative
+monocular depth and confidence; it does not infer metric scale or stereo depth.
 """
 from __future__ import annotations
 
+import math
 import torch
 from torch import nn
 import torch.nn.functional as F
 
 
+def _groups(channels: int) -> int:
+    return math.gcd(8, channels)
+
+
 class ConvNormAct(nn.Sequential):
-    def __init__(self, cin: int, cout: int, stride: int = 1):
+    def __init__(self, cin: int, cout: int, stride: int = 1, kernel: int = 3):
         super().__init__(
-            nn.Conv2d(cin, cout, 3, stride=stride, padding=1, bias=False),
-            nn.BatchNorm2d(cout),
+            nn.Conv2d(cin, cout, kernel, stride=stride, padding=kernel // 2, bias=False),
+            nn.GroupNorm(_groups(cout), cout),
             nn.SiLU(inplace=True),
         )
 
 
-class AFVisionBlock(nn.Module):
-    """Spatially local transformer block; Linear weights are INT4 candidates."""
-    def __init__(self, dim: int, expansion: int = 2):
+class ChannelGate(nn.Module):
+    """Lightweight channel attention; Linear layers remain quantization candidates."""
+    def __init__(self, channels: int, reduction: int = 4):
         super().__init__()
-        self.norm1 = nn.LayerNorm(dim)
-        self.qkv = nn.Linear(dim, dim * 3)
-        self.proj = nn.Linear(dim, dim)
-        self.norm2 = nn.LayerNorm(dim)
-        self.mlp = nn.Sequential(
-            nn.Linear(dim, dim * expansion),
-            nn.GELU(),
-            nn.Linear(dim * expansion, dim),
-        )
+        hidden = max(8, channels // reduction)
+        self.pool = nn.AdaptiveAvgPool2d(1)
+        self.fc1 = nn.Linear(channels, hidden)
+        self.fc2 = nn.Linear(hidden, channels)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        b, c, h, w = x.shape
-        tokens = x.flatten(2).transpose(1, 2)
-        z = self.norm1(tokens)
-        q, k, v = self.qkv(z).chunk(3, dim=-1)
-        scale = q.shape[-1] ** -0.5
-        attn = torch.softmax((q @ k.transpose(-2, -1)) * scale, dim=-1)
-        tokens = tokens + self.proj(attn @ v)
-        tokens = tokens + self.mlp(self.norm2(tokens))
-        return tokens.transpose(1, 2).reshape(b, c, h, w)
+        b, c, _, _ = x.shape
+        scale = self.pool(x).reshape(b, c)
+        scale = torch.sigmoid(self.fc2(F.silu(self.fc1(scale)))).reshape(b, c, 1, 1)
+        return x * scale
+
+
+class EfficientContextBlock(nn.Module):
+    """Depthwise-separable residual context block with linear channel attention."""
+    def __init__(self, channels: int, expansion: int = 2):
+        super().__init__()
+        self.spatial = nn.Sequential(
+            nn.Conv2d(channels, channels, 5, padding=2, groups=channels, bias=False),
+            nn.GroupNorm(_groups(channels), channels),
+            nn.SiLU(inplace=True),
+            nn.Conv2d(channels, channels, 1, bias=False),
+            nn.GroupNorm(_groups(channels), channels),
+        )
+        self.channel_gate = ChannelGate(channels)
+        hidden = channels * expansion
+        self.mlp = nn.Sequential(
+            ConvNormAct(channels, hidden, kernel=1),
+            nn.Conv2d(hidden, channels, 1, bias=False),
+            nn.GroupNorm(_groups(channels), channels),
+        )
+        self.act = nn.SiLU(inplace=True)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.act(x + self.channel_gate(self.spatial(x)))
+        return self.act(x + self.mlp(x))
 
 
 class AFVisionMAX(nn.Module):
-    """Compact RGB -> relative depth + confidence network.
+    """RGB -> relative depth + per-pixel confidence.
 
     Input: float RGB tensor [B,3,H,W], normalized to [0,1].
     Outputs: relative depth [B,1,H,W] and confidence [B,1,H,W].
+    The multi-scale decoder preserves finer edges than the previous
+    single-scale attention head while avoiding quadratic global attention.
     """
     def __init__(self, width: int = 48, blocks: int = 2):
         super().__init__()
-        self.stem = nn.Sequential(
-            ConvNormAct(3, width // 2, 2),
-            ConvNormAct(width // 2, width, 2),
-            ConvNormAct(width, width, 2),  # keep attention token count bounded for mobile inference
+        half = width // 2
+        quarter = width
+        deep = width * 2
+        self.stem_half = nn.Sequential(
+            ConvNormAct(3, half, stride=2),
+            ConvNormAct(half, half),
         )
-        self.context = nn.Sequential(*[AFVisionBlock(width) for _ in range(blocks)])
+        self.stem_quarter = nn.Sequential(
+            ConvNormAct(half, quarter, stride=2),
+            ConvNormAct(quarter, quarter),
+        )
+        self.stem_eighth = nn.Sequential(
+            ConvNormAct(quarter, deep, stride=2),
+            *[EfficientContextBlock(deep) for _ in range(blocks)],
+        )
+        self.decode_quarter = nn.Sequential(
+            ConvNormAct(deep + quarter, quarter),
+            EfficientContextBlock(quarter),
+        )
+        self.decode_half = nn.Sequential(
+            ConvNormAct(quarter + half, half),
+            ConvNormAct(half, half),
+        )
         self.depth_head = nn.Sequential(
-            ConvNormAct(width, width // 2),
-            nn.Conv2d(width // 2, 1, 1),
+            ConvNormAct(half, half),
+            nn.Conv2d(half, 1, 1),
             nn.Softplus(),
         )
         self.confidence_head = nn.Sequential(
-            ConvNormAct(width, width // 2),
-            nn.Conv2d(width // 2, 1, 1),
+            ConvNormAct(half, half),
+            nn.Conv2d(half, 1, 1),
             nn.Sigmoid(),
         )
 
     def forward(self, image: torch.Tensor):
         size = image.shape[-2:]
-        features = self.context(self.stem(image))
-        depth = F.interpolate(self.depth_head(features), size=size, mode="bilinear", align_corners=False)
-        confidence = F.interpolate(self.confidence_head(features), size=size, mode="bilinear", align_corners=False)
-        # Normalize per image: this is relative depth, not metric distance.
+        half = self.stem_half(image)
+        quarter = self.stem_quarter(half)
+        deep = self.stem_eighth(quarter)
+        up_quarter = F.interpolate(deep, size=quarter.shape[-2:], mode="bilinear", align_corners=False)
+        decoded_quarter = self.decode_quarter(torch.cat((up_quarter, quarter), dim=1))
+        up_half = F.interpolate(decoded_quarter, size=half.shape[-2:], mode="bilinear", align_corners=False)
+        decoded_half = self.decode_half(torch.cat((up_half, half), dim=1))
+
+        depth = F.interpolate(self.depth_head(decoded_half), size=size, mode="bilinear", align_corners=False)
+        confidence = F.interpolate(self.confidence_head(decoded_half), size=size, mode="bilinear", align_corners=False)
+
+        # Per-image normalization intentionally makes this relative, not metric, depth.
         flat = depth.flatten(1)
         lo = flat.amin(dim=1).view(-1, 1, 1, 1)
         hi = flat.amax(dim=1).view(-1, 1, 1, 1)
@@ -86,5 +133,6 @@ class AFVisionMAX(nn.Module):
 if __name__ == "__main__":
     model = AFVisionMAX().eval()
     sample = torch.rand(1, 3, 192, 256)
-    d, c = model(sample)
-    print("depth:", tuple(d.shape), "confidence:", tuple(c.shape))
+    with torch.no_grad():
+        depth, confidence = model(sample)
+    print("depth:", tuple(depth.shape), "confidence:", tuple(confidence.shape))
