@@ -11,11 +11,23 @@ Updated: 2026-11-08
 
 These changes improve the scan UI and establish a capability check, but do not change the depth model: the shipped scanner still runs its existing MiDaS baseline. AF-Vision weights, AF-Vision Android inference, synchronized dual-camera capture, calibrated stereo depth and multi-view mesh fusion are still outstanding.
 
+## Dataset pipeline progress (2026-11-08)
+
+- Added a CSV-manifest dataset preparation tool for paired RGB/depth data.
+- Supports float32 `.npy` depth in meters and single-channel PNG depth (millimeters by default); normalizes output to uint16 millimeters with zero as invalid.
+- Splits by `scene_id`, not by adjacent frames, and rejects a one-scene manifest so train/validation leakage is less likely.
+- Added example manifest and tests for deterministic scene assignment and depth conversion.
+- Added a dedicated GitHub Actions Python test job for this preparation pipeline.
+- Documented TartanAir V2 as the recommended first dataset source, with attribution and license review. ScanNet remains an agreement-controlled option.
+
+The dataset itself has not been downloaded or committed. No training has started because no authorized dataset files are present in the repository or available runner workspace.
+
 ## Added to repository
 
 - Initial PyTorch AFVisionMAX architecture scaffold.
 - RGB + paired depth PNG dataset loader and training loop.
-- Scene-disjoint dataset layout and training instructions.
+- Scene-disjoint dataset preparation tool, example CSV manifest, tests and CI job.
+- Dataset source guidance and license notes.
 - Guarded TorchAO INT4 weight-only quantization script for eligible Linear layers.
 - Tensor contract test for output shapes and ranges.
 - Mobile-oriented token-count reduction in the feature stem.
