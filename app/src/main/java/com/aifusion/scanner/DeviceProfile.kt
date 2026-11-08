@@ -24,8 +24,12 @@ object SmartDeviceEngine {
         val ramMb = info.totalMem / (1024 * 1024)
         val cores = Runtime.getRuntime().availableProcessors().coerceAtLeast(1)
         val abi = Build.SUPPORTED_ABIS.firstOrNull() ?: "unknown"
-        val soc = listOf(Build.HARDWARE, Build.BOARD, Build.SOC_MANUFACTURER, Build.SOC_MODEL)
-            .filter { it.isNotBlank() }.distinct().joinToString(" / ")
+        val socParts = mutableListOf(Build.HARDWARE, Build.BOARD)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            socParts += Build.SOC_MANUFACTURER
+            socParts += Build.SOC_MODEL
+        }
+        val soc = socParts.filter { it.isNotBlank() }.distinct().joinToString(" / ")
         val mode = when {
             ramMb < 5000 || cores <= 4 -> ScanMode.LOW_RAM
             ramMb >= 7000 && cores >= 6 -> ScanMode.PERFORMANCE
