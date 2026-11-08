@@ -11,10 +11,12 @@ import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import com.aifusion.scanner.ai.ScanIntelligenceEngine
 
 class MainActivity : AppCompatActivity() {
     private lateinit var viewport: MeshViewport
     private lateinit var cameraStatus: TextView
+    private lateinit var intelligenceStatus: TextView
     private var cameraController: CameraScanController? = null
 
     private val cameraPermission = registerForActivityResult(
@@ -69,13 +71,22 @@ class MainActivity : AppCompatActivity() {
         }, LinearLayout.LayoutParams(-1, dp(26)))
 
         cameraStatus = TextView(this).apply {
-            text = "CAMERA INPUT IDLE — AI depth belum disambungkan"
+            text = "CAMERA INPUT IDLE"
             textSize = 10f
             gravity = Gravity.CENTER
             setTextColor(Color.rgb(105, 205, 255))
             setPadding(dp(4), dp(5), dp(4), dp(5))
         }
-        root.addView(cameraStatus, LinearLayout.LayoutParams(-1, dp(42)))
+        root.addView(cameraStatus, LinearLayout.LayoutParams(-1, dp(38)))
+
+        intelligenceStatus = TextView(this).apply {
+            text = "SCAN INTELLIGENCE OFFLINE • Menunggu frame kamera"
+            textSize = 11f
+            gravity = Gravity.CENTER
+            setTextColor(Color.rgb(186, 205, 245))
+            setPadding(dp(8), dp(6), dp(8), dp(6))
+        }
+        root.addView(intelligenceStatus, LinearLayout.LayoutParams(-1, dp(62)))
 
         val controls = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -100,7 +111,7 @@ class MainActivity : AppCompatActivity() {
         }, LinearLayout.LayoutParams(-1, dp(48)))
 
         root.addView(TextView(this).apply {
-            text = "CameraX kini menerima frame kamera belakang secara offline. Frame ini belum menghasilkan depth atau mesh sebenar."
+            text = "AI advisor menilai cahaya, kontras dan isyarat detail secara offline. Ia belum menjana depth atau mesh sebenar."
             textSize = 10f
             gravity = Gravity.CENTER
             setTextColor(Color.rgb(126, 145, 180))
@@ -110,11 +121,18 @@ class MainActivity : AppCompatActivity() {
         setContentView(root)
         cameraController = CameraScanController(this, this) { stats ->
             runOnUiThread {
-                cameraStatus.text = if (stats == null) {
-                    "CAMERA INPUT STOPPED"
+                if (stats == null) {
+                    cameraStatus.text = "CAMERA INPUT STOPPED"
+                    intelligenceStatus.text = "SCAN INTELLIGENCE OFFLINE • Menunggu frame kamera"
                 } else {
-                    "FRAME #${stats.frameNumber}  •  ${stats.width}×${stats.height}  •  " +
-                        "LUMA ${stats.meanLuma.toInt()}  •  ROT ${stats.rotationDegrees}°"
+                    val assessment = ScanIntelligenceEngine.assess(stats)
+                    cameraStatus.text =
+                        "FRAME #" + stats.frameNumber + " • " + stats.width + "×" + stats.height +
+                            " • LUMA " + stats.meanLuma.toInt() +
+                            " • KONTRAS " + stats.lumaStdDev.toInt()
+                    intelligenceStatus.text =
+                        "SCAN AI • " + assessment.qualityScore + "/100 • " +
+                            assessment.headline + "\n" + assessment.guidance
                 }
             }
         }
