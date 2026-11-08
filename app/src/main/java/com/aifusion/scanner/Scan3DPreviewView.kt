@@ -98,23 +98,24 @@ class Scan3DPreviewView @JvmOverloads constructor(
         val w = width.toFloat()
         val h = height.toFloat()
         paint.style = Paint.Style.FILL
-        // Translucent so the camera image is still partly visible behind the preview.
-        paint.color = 0xB20B1015.toInt()
-        canvas.drawRoundRect(RectF(0f, 0f, w, h), 18f, 18f, paint)
+        // Opaque scan canvas: live scan mode shows the reconstructed depth mesh,
+        // never the normal camera preview underneath it.
+        paint.color = 0xFF07111B.toInt()
+        canvas.drawRect(0f, 0f, w, h, paint)
 
         val image = bitmap
         if (image != null && !image.isRecycled) drawReliefMesh(canvas, image, w, h)
         else {
             paint.color = 0xCCFFFFFF.toInt()
             paint.textSize = 12f
-            canvas.drawText("Waiting for depth…", 10f, h / 2f, paint)
+            canvas.drawText("WAITING FOR DEPTH FRAME…", 18f, h / 2f, paint)
         }
         drawCoverage(canvas, w, h)
     }
 
     private fun drawReliefMesh(canvas: Canvas, image: Bitmap, w: Float, h: Float) {
-        val cols = 23
-        val rows = 23
+        val cols = 35
+        val rows = 35
         val cx = w / 2f
         val cy = h / 2f
         val scale = minOf(w, h) * 0.34f
@@ -186,7 +187,13 @@ class Scan3DPreviewView @JvmOverloads constructor(
             focusLocked -> "LIVE 3D • RECOVERING"
             else -> "LIVE 3D • AI DEPTH"
         }
-        canvas.drawText(title, 10f, 17f, paint)
+        paint.textSize = 14f
+        canvas.drawText(title, 18f, 28f, paint)
+        if (aiDepth) {
+            paint.color = 0xBFE2EEFF.toInt()
+            paint.textSize = 10f
+            canvas.drawText("RELATIVE DEPTH • NOT MEASURED DISTANCE", 18f, 45f, paint)
+        }
         if (focusLocked) {
             paint.color = if (trackingFound) 0xFF55D68A.toInt() else 0xFFFFC857.toInt()
             paint.textSize = 9f
