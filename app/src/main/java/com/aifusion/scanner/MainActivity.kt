@@ -1,15 +1,28 @@
 package com.aifusion.scanner
 
-import android.app.Activity
+import android.Manifest
+import android.content.pm.PackageManager
 import android.graphics.Color
 import android.os.Bundle
 import android.view.Gravity
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
 
-class MainActivity : Activity() {
+class MainActivity : AppCompatActivity() {
     private lateinit var viewport: MeshViewport
+    private lateinit var cameraStatus: TextView
+    private var cameraController: CameraScanController? = null
+
+    private val cameraPermission = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) startCameraInput()
+        else cameraStatus.text = "CAMERA PERMISSION DENIED — mesh demo kekal tersedia"
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -40,41 +53,86 @@ class MainActivity : Activity() {
         root.addView(viewport, LinearLayout.LayoutParams(-1, 0, 1f))
 
         root.addView(TextView(this).apply {
-            text = "DEMO MESH  •  BUKAN HASIL IMBASAN KAMERA"
+            text = "DEMO MESH  •  BELUM DIJANA DARIPADA KAMERA"
             textSize = 10f
             gravity = Gravity.CENTER
             letterSpacing = 0.06f
             setTextColor(Color.rgb(255, 190, 95))
-            setPadding(0, dp(10), 0, dp(8))
-        }, LinearLayout.LayoutParams(-1, dp(36)))
+            setPadding(0, dp(8), 0, dp(6))
+        }, LinearLayout.LayoutParams(-1, dp(30)))
 
         root.addView(TextView(this).apply {
             text = "Seret untuk pusing  •  Cubit untuk zum"
             textSize = 12f
             gravity = Gravity.CENTER
             setTextColor(Color.rgb(164, 183, 220))
-        }, LinearLayout.LayoutParams(-1, dp(28)))
+        }, LinearLayout.LayoutParams(-1, dp(26)))
+
+        cameraStatus = TextView(this).apply {
+            text = "CAMERA INPUT IDLE — AI depth belum disambungkan"
+            textSize = 10f
+            gravity = Gravity.CENTER
+            setTextColor(Color.rgb(105, 205, 255))
+            setPadding(dp(4), dp(5), dp(4), dp(5))
+        }
+        root.addView(cameraStatus, LinearLayout.LayoutParams(-1, dp(42)))
 
         val controls = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
         }
         controls.addView(Button(this).apply {
-            text = "Tambah liputan demo"
+            text = "Start camera input"
+            isAllCaps = false
+            setOnClickListener { requestCameraInput() }
+        }, LinearLayout.LayoutParams(0, dp(50), 1f))
+        controls.addView(Button(this).apply {
+            text = "Stop"
+            isAllCaps = false
+            setOnClickListener { cameraController?.stop() }
+        }, LinearLayout.LayoutParams(0, dp(50), 1f))
+        root.addView(controls, LinearLayout.LayoutParams(-1, dp(56)))
+
+        root.addView(Button(this).apply {
+            text = "Tambah liputan demo mesh"
             isAllCaps = false
             setOnClickListener { viewport.addDemoCoverage() }
-        }, LinearLayout.LayoutParams(0, dp(52), 1f))
-        root.addView(controls, LinearLayout.LayoutParams(-1, dp(58)))
+        }, LinearLayout.LayoutParams(-1, dp(48)))
 
         root.addView(TextView(this).apply {
-            text = "Peringkat ini menguji paparan 3D sahaja. Kamera dan AI depth sebenar belum disambungkan."
+            text = "CameraX kini menerima frame kamera belakang secara offline. Frame ini belum menghasilkan depth atau mesh sebenar."
             textSize = 10f
             gravity = Gravity.CENTER
             setTextColor(Color.rgb(126, 145, 180))
             setPadding(dp(4), dp(4), dp(4), dp(4))
-        }, LinearLayout.LayoutParams(-1, dp(42)))
+        }, LinearLayout.LayoutParams(-1, dp(44)))
 
         setContentView(root)
+        cameraController = CameraScanController(this, this) { stats ->
+            runOnUiThread {
+                cameraStatus.text = if (stats == null) {
+                    "CAMERA INPUT STOPPED"
+                } else {
+                    "FRAME #${stats.frameNumber}  •  ${stats.width}×${stats.height}  •  " +
+                        "LUMA ${stats.meanLuma.toInt()}  •  ROT ${stats.rotationDegrees}°"
+                }
+            }
+        }
+    }
+
+    private fun requestCameraInput() {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) ==
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            startCameraInput()
+        } else {
+            cameraPermission.launch(Manifest.permission.CAMERA)
+        }
+    }
+
+    private fun startCameraInput() {
+        cameraStatus.text = "STARTING BACK CAMERA…"
+        cameraController?.start()
     }
 
     override fun onResume() {
@@ -83,8 +141,15 @@ class MainActivity : Activity() {
     }
 
     override fun onPause() {
+        cameraController?.stop()
         if (::viewport.isInitialized) viewport.onPause()
         super.onPause()
+    }
+
+    override fun onDestroy() {
+        cameraController?.close()
+        cameraController = null
+        super.onDestroy()
     }
 
     private fun dp(value: Int): Int =
