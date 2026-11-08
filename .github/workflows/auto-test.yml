@@ -15,6 +15,26 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  af-vision-data-tests:
+    name: AF-Vision dataset preparation tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install AF-Vision test dependencies
+        run: python -m pip install -r training/af_vision/requirements-dev.txt
+
+      - name: Test dataset preparation
+        run: python -m pytest training/af_vision/tests -q
+
   android-checks:
     name: Build, unit tests, lint and APK
     runs-on: ubuntu-latest
