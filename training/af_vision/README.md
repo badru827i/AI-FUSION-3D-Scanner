@@ -38,6 +38,43 @@ relative [0,1] targets. This means it cannot learn absolute meters from this
 training recipe. Metric depth requires calibrated scale supervision and a
 different loss/evaluation contract.
 
+### Recommended first source: TartanAir V2
+
+Use TartanAir V2 first for the initial pipeline because its official documentation
+provides RGB, depth, camera poses and configurable camera models, and states the
+dataset is CC BY 4.0 (attribute the dataset and cite its paper). The official
+toolkit is MIT-licensed. Check the current official terms before distributing
+derived data or model weights:
+- Official documentation: https://tartanair.org/
+- Official repository/toolkit: https://github.com/castacks/tartanair_tools
+
+ScanNet is useful later for real indoor RGB-D sequences and camera poses, but
+download requires acceptance of its Terms of Use; do not mirror its data in
+this repository. NYU Depth V2 is another indoor benchmark, but verify the
+current source terms and use an official split rather than inventing a random
+frame split.
+
+### Convert raw data into the training layout
+
+Create a CSV based on `manifest.example.csv` with columns
+`rgb_path,depth_path,scene_id`. Paths are relative to the source root unless
+absolute. The preparation script accepts float32 `.npy` depth in meters and
+single-channel PNG depth (millimeters by default), filters invalid/out-of-range
+pixels, converts depth to uint16 millimeters and assigns entire scenes to only
+one split:
+
+```bash
+python training/af_vision/prepare_dataset.py \
+  --source-root /path/to/tartanair_export \
+  --manifest /path/to/manifest.csv \
+  --out /path/to/af_vision_dataset \
+  --val-fraction 0.15 --seed 42
+```
+
+Review the printed pair/scene counts. Both train and validation must contain
+valid pairs, and no scene may appear in both. Keep the original dataset and
+license/attribution records separate from the generated normalized dataset.
+
 ## 2. Train baseline
 
 ```bash
