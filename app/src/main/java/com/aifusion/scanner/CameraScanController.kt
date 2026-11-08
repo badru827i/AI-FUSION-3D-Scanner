@@ -9,6 +9,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleOwner
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicLong
+import kotlin.math.sqrt
 
 data class CameraFrameStats(
     val frameNumber: Long,
@@ -16,12 +17,17 @@ data class CameraFrameStats(
     val height: Int,
     val rotationDegrees: Int,
     val timestampNanos: Long,
-    val meanLuma: Double
+    val meanLuma: Double,
+    val lumaStdDev: Double,
+    val underexposedRatio: Double,
+    val overexposedRatio: Double,
+    val edgeStrength: Double,
+    val sampleCount: Int
 )
 
 /**
- * Offline CameraX input stage. It deliberately does not claim to produce depth
- * or geometry; it supplies measured frame metadata to the future vision pipeline.
+ * Offline CameraX input stage. Sampled luminance statistics feed the advisor;
+ * they are not depth, geometry, or focus measurements.
  */
 class CameraScanController(
     private val context: Context,
@@ -58,18 +64,55 @@ class CameraScanController(
 
     private fun analyzeFrame(image: ImageProxy) {
         try {
-            val buffer = image.planes.firstOrNull()?.buffer ?: return
+            val plane = image.planes.firstOrNull() ?: return
+            val buffer = plane.buffer
             val limit = buffer.limit()
-            val stride = (limit / 512).coerceAtLeast(1)
-            var sum = 0L
-            var samples = 0
-            var index = 0
-            while (index < limit) {
-                sum += buffer.get(index).toInt() and 0xff
-                samples++
-                index += stride
+            val gridWidth = minOf(48, image.width).coerceAtLeast(1)
+            val gridHeight = minOf(48, image.height).coerceAtLeast(1)
+            val values = FloatArray(gridWidth * gridHeight)
+            var count = 0
+            var sum = 0.0
+            var under = 0
+            var over = 0
+
+            for (gy in 0 until gridHeight) {
+                val y = gy * image.height / gridHeight
+                for (gx in 0 until gridWidth) {
+                    val x = gx * image.width / gridWidth
+                    val offset = y * plane.rowStride + x * plane.pixelStride
+                    if (offset < 0 || offset >= limit) continue
+                    val value = (buffer.get(offset).toInt() and 0xff).toFloat()
+                    values[gy * gridWidth + gx] = value
+                    count++
+                    sum += value
+                    if (value <= 32f) under++
+                    if (value >= 223f) over++
+                }
             }
-            val mean = if (samples == 0) 0.0 else sum.toDouble() / samples
+
+            val mean = if (count == 0) 0.0 else sum / count
+            var squared = 0.0
+            var edgeSum = 0.0
+            var edgeCount = 0
+            if (count > 0) {
+                for (gy in 0 until gridHeight) {
+                    for (gx in 0 until gridWidth) {
+                        val index = gy * gridWidth + gx
+                        val delta = values[index].toDouble() - mean
+                        squared += delta * delta
+                        if (gx > 0) {
+                            edgeSum += kotlin.math.abs(values[index].toDouble() - values[index - 1])
+                            edgeCount++
+                        }
+                        if (gy > 0) {
+                            edgeSum += kotlin.math.abs(values[index].toDouble() - values[index - gridWidth])
+                            edgeCount++
+                        }
+                    }
+                }
+            }
+
+            val stdDev = if (count == 0) 0.0 else sqrt(squared / count)
             onFrame(
                 CameraFrameStats(
                     frameNumber = frameCounter.incrementAndGet(),
@@ -77,11 +120,16 @@ class CameraScanController(
                     height = image.height,
                     rotationDegrees = image.imageInfo.rotationDegrees,
                     timestampNanos = image.imageInfo.timestamp,
-                    meanLuma = mean
+                    meanLuma = mean,
+                    lumaStdDev = stdDev,
+                    underexposedRatio = if (count == 0) 0.0 else under.toDouble() / count,
+                    overexposedRatio = if (count == 0) 0.0 else over.toDouble() / count,
+                    edgeStrength = if (edgeCount == 0) 0.0 else edgeSum / edgeCount,
+                    sampleCount = count
                 )
             )
         } catch (_: Exception) {
-            // A malformed or dropped frame must not stop subsequent analysis.
+            // One malformed frame must not stop subsequent analysis.
         } finally {
             image.close()
         }
