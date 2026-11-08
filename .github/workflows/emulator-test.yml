@@ -59,13 +59,15 @@ jobs:
           target: google_apis
           arch: x86_64
           profile: pixel_2
-          emulator-options: -no-window -no-audio -no-boot-anim -camera-back emulated
+          emulator-options: -no-window -no-audio -no-boot-anim -no-snapshot -camera-back emulated
           disable-animations: true
           script: |
             set +e
-            gradle --no-daemon :app:connectedDebugAndroidTest --stacktrace 2>&1 | tee emulator-test.log
-            TEST_EXIT=${PIPESTATUS[0]}
-            adb logcat -d -v threadtime 2>&1 | tail -n 8000 > emulator-logcat-tail.txt || true
+            gradle --no-daemon :app:connectedDebugAndroidTest --stacktrace > emulator-test.log 2>&1
+            TEST_EXIT=$?
+            cat emulator-test.log
+            adb logcat -d -v threadtime > emulator-logcat.txt 2>&1
+            grep -E -i 'FATAL EXCEPTION|AndroidRuntime|Fatal signal|am_crash|Process.*(died|crash)|instrumentation' emulator-logcat.txt | tail -n 250 > emulator-crash-clues.txt || true
             printf 'connectedDebugAndroidTest exit code: %s\n' "$TEST_EXIT" > emulator-test-summary.txt
             echo "## Emulator instrumentation tests" >> "$GITHUB_STEP_SUMMARY"
             echo "- Command: gradle --no-daemon :app:connectedDebugAndroidTest --stacktrace" >> "$GITHUB_STEP_SUMMARY"
@@ -92,11 +94,11 @@ jobs:
               echo "The emulator test command did not produce its summary file; inspect the workflow step output."
             fi
             echo
-            echo "## Failure clues"
-            if [ -f emulator-test.log ]; then
-              grep -E -i 'failed|failure|exception|error|not found|assertion' emulator-test.log | tail -n 80 || true
+            echo "## Crash clues"
+            if [ -f emulator-crash-clues.txt ]; then
+              cat emulator-crash-clues.txt
             else
-              echo "No emulator-test.log was created."
+              echo "No emulator crash clues were captured."
             fi
           } | tee emulator-test-report.md >> "$GITHUB_STEP_SUMMARY"
 
@@ -109,7 +111,8 @@ jobs:
             emulator-test-report.md
             emulator-test-summary.txt
             emulator-test.log
-            emulator-logcat-tail.txt
+            emulator-logcat.txt
+            emulator-crash-clues.txt
             app/build/reports/androidTests/**
             app/build/reports/tests/**
             app/build/outputs/androidTest-results/**
