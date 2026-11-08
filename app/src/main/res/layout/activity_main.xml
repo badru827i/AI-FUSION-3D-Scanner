@@ -15,6 +15,7 @@
         android:id="@+id/trackingOverlay"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
+        android:elevation="4dp"
         android:clickable="true"
         android:focusable="true" />
 
@@ -22,6 +23,7 @@
         android:id="@+id/hologramOverlay"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
+        android:elevation="5dp"
         android:clickable="false"
         android:focusable="false" />
 
@@ -75,7 +77,7 @@
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_gravity="bottom|center_horizontal"
-        android:layout_marginBottom="150dp"
+        android:layout_marginBottom="205dp"
         android:background="#D90B1015"
         android:elevation="10dp"
         android:gravity="center"
@@ -104,6 +106,7 @@
     <LinearLayout
         android:id="@+id/exportActions"
         android:layout_width="match_parent"
+        android:elevation="10dp"
         android:layout_height="wrap_content"
         android:layout_gravity="bottom"
         android:layout_marginStart="10dp"
