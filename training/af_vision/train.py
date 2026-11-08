@@ -129,8 +129,19 @@ def main():
             image, target, mask = image.to(device), target.to(device), mask.to(device)
             pred, confidence = model(image)
             valid_count = mask.sum().clamp_min(1.0)
+            depth_error = (pred - target).abs()
             depth_loss = (F.smooth_l1_loss(pred, target, reduction="none") * mask).sum() / valid_count
-            confidence_loss = (F.binary_cross_entropy(confidence, mask, reduction="mean"))
+            # Confidence learns whether the predicted depth is accurate, rather
+            # than trivially learning that most dataset pixels are valid.
+            with torch.no_grad():
+                confidence_target = torch.exp(-5.0 * depth_error) * mask
+            confidence_error = F.binary_cross_entropy(
+                confidence.clamp(1e-5, 1.0 - 1e-5),
+                confidence_target,
+                reduction="none",
+            )
+            confidence_weights = mask + 0.1 * (1.0 - mask)
+            confidence_loss = (confidence_error * confidence_weights).sum() / confidence_weights.sum().clamp_min(1.0)
             loss = depth_loss + 0.05 * confidence_loss
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
