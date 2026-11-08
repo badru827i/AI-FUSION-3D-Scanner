@@ -1,34 +1,24 @@
-# AI-FUSION 3D Scanner — Native Vision Rebuild
+# AI-FUSION 3D Scanner
 
-Clean Android-first rewrite for an original, locally trained AI-FUSION vision model and camera-based 3D reconstruction.
+Offline Android 3D-scanner research build. The current app includes a live OpenGL demo viewport and a CameraX analysis input path. The viewport mesh is still procedural demo geometry and is **not** reconstructed from camera frames.
 
-## Principles
-- No hosted AI API or cloud inference.
-- Model architecture and training pipeline are owned by this project.
-- Weights must be trained and evaluated on approved datasets; random weights are never presented as a trained AI.
-- Offline-first Android camera and inference pipeline.
-- Dual-camera capture is capability-gated by Android Camera2 and device stream limits; two rear sensors do not guarantee simultaneous capture.
+## Current offline scan intelligence
 
-## Modules
-- app/: Android application, CameraX frame input and device capability detection.
-- model/: model contract and checkpoint placement.
-- training/: model training and export pipeline.
-- docs/: calibration, depth fusion and validation.
+The CameraX analyzer samples the Y/luminance plane and computes frame luminance, luminance variation, clipped-dark/bright ratios, and a coarse spatial edge/detail signal. `ScanIntelligenceEngine` turns those measurements into an interpretable scan-quality score and capture guidance. It is a lightweight deterministic advisor, not a trained neural network, object detector, focus meter, depth model, or metric measurement system.
 
-## Current implementation status
+## Not implemented yet
 
-- Interactive OpenGL ES 2.0 wireframe viewport is present, with rotation, pinch zoom and demo-only coverage.
-- CameraX back-camera ImageAnalysis input is implemented with runtime permission handling, latest-frame backpressure, frame dimensions, rotation, timestamp and sampled luma statistics.
-- Camera frames are processed off the UI thread and closed after analysis. No camera preview is shown in the main viewport.
-- The displayed geometry remains procedural demo geometry. It is **not** generated from camera frames.
-- Trained AF-VisionNet weights, Android depth inference, synchronized dual-camera capture, pose tracking, depth fusion, real mesh reconstruction, texture generation and OBJ/PLY export are not implemented yet.
-- GitHub Actions builds a debug APK. A successful completed workflow run is required before calling the branch build-verified.
+- Trained AF-VisionNet checkpoint and Android inference backend
+- Relative/metric depth estimation
+- Camera pose tracking and multi-view registration
+- Verified synchronized 12MP + 50MP capture
+- Point-cloud generation and true mesh reconstruction
+- Surface fusion, texture reconstruction, OBJ/GLB/PLY export
 
-## Next engineering stages
+## Build
 
-1. Confirm the CameraX build and test camera permission/lifecycle on physical Android devices.
-2. Add camera intrinsics calibration, exposure/focus controls and motion/pose tracking.
-3. Train and validate AF-VisionNet on paired RGB/depth data.
-4. Connect real depth output to incremental point-cloud and mesh reconstruction.
-5. Add calibrated dual-camera capture only on devices whose stream combinations pass runtime checks.
-6. Add mesh repair, solid/textured display and OBJ/PLY export.
+The GitHub Actions workflow builds the debug APK. A successful build confirms compilation only; device camera behavior and scan accuracy still require physical-device testing.
+
+## Model development
+
+AF-VisionNet training starts from random initialization and requires paired RGB/depth tensors. Do not ship randomly initialized weights or describe them as a working depth model. See `training/train_native_vision.py` and `model/README.md`.
