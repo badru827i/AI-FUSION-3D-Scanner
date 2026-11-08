@@ -1,0 +1,5 @@
+rgb_path,depth_path,scene_id
+scene_001/image_left/000001.png,scene_001/depth_left/000001.npy,scene_001
+scene_001/image_left/000002.png,scene_001/depth_left/000002.npy,scene_001
+scene_002/image_left/000001.png,scene_002/depth_left/000001.npy,scene_002
+scene_003/image_left/000001.png,scene_003/depth_left/000001.npy,scene_003
