@@ -2,6 +2,15 @@
 
 Updated: 2026-11-08
 
+## Android scanner integration progress (2026-11-08)
+
+- Scan mode now switches to an opaque full-screen live depth-mesh canvas and hides the normal camera preview surface while CameraX analysis/capture continues.
+- The mesh view uses a denser on-screen grid and labels the current output as relative depth, not measured distance.
+- A read-only Android 11+ camera capability probe reports whether the platform advertises two concurrent rear cameras. It does not bind both cameras or perform stereo fusion.
+- Fixed a malformed export-error string concatenation found during Android source inspection.
+
+These changes improve the scan UI and establish a capability check, but do not change the depth model: the shipped scanner still runs its existing MiDaS baseline. AF-Vision weights, AF-Vision Android inference, synchronized dual-camera capture, calibrated stereo depth and multi-view mesh fusion are still outstanding.
+
 ## Added to repository
 
 - Initial PyTorch AFVisionMAX architecture scaffold.
