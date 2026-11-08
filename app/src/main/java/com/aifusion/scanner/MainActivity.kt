@@ -145,7 +145,7 @@ class MainActivity : ComponentActivity() {
             } else {
                 lockSelectionArmed = true
                 trackingLockButton.text = "Tap Object…"
-                scanStatus.text = "Lock mode ready • tap the object in the camera view"
+                scanStatus.text = "Lock mode ready • tap the object area on the mesh"
             }
         }
         miniPreview = findViewById(R.id.miniPreview)
@@ -196,7 +196,7 @@ class MainActivity : ComponentActivity() {
         depthAi = DepthAiEngine(this, profile)
         hologramOverlay.setLowPowerMode(profile.mode == ScanMode.LOW_RAM)
 
-        deviceStatus.text = "AI-FUSION • " + SmartDeviceEngine.summary(profile) + " • Depth AI " + depthAi.backend + " • latest-frame router"
+        deviceStatus.text = "AI-FUSION • " + SmartDeviceEngine.summary(profile) + " • Depth AI " + depthAi.backend + " • " + CameraCapabilityProbe.summary(this)"
         startButton.setOnClickListener { if (!scanning) startScan() else finishScan() }
 
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
@@ -231,7 +231,7 @@ class MainActivity : ComponentActivity() {
                 }
             provider.unbindAll()
             provider.bindToLifecycle(this, CameraSelector.DEFAULT_BACK_CAMERA, preview, imageCapture, imageAnalysis)
-            scanStatus.text = "Camera ready • point at the object"
+            scanStatus.text = "Camera ready • point at the object • " + CameraCapabilityProbe.summary(this)
         }, ContextCompat.getMainExecutor(this))
     }
 
@@ -263,6 +263,9 @@ class MainActivity : ComponentActivity() {
         }
         coverage.reset()
         miniPreview.clear()
+        miniPreview.visibility = View.VISIBLE
+        previewView.visibility = View.INVISIBLE
+        denseTrackingButton.visibility = View.GONE
         coverageText.visibility = View.GONE
         tracker.start()
         objectTracker.clear()
@@ -276,7 +279,7 @@ class MainActivity : ComponentActivity() {
         startButton.isEnabled = true
         startButton.text = "Stop 3D Scan"
         coverageText.text = "0% covered • LIVE"
-        scanStatus.text = "AI Depth " + depthAi.backend + " • tap object to lock • frames: 0"
+        scanStatus.text = "Live mesh • " + depthAi.backend + " • tap a point on the mesh to lock • frames: 0"
         captureFrame()
     }
 
@@ -723,6 +726,9 @@ class MainActivity : ComponentActivity() {
             reconstructing = false
             startButton.isEnabled = true
             startButton.text = "Start 3D Scan"
+            miniPreview.clear()
+            previewView.visibility = View.VISIBLE
+            denseTrackingButton.visibility = View.VISIBLE
             scanStatus.text = "No frames saved • improve lighting and try again"
             return
         }
@@ -757,7 +763,7 @@ class MainActivity : ComponentActivity() {
                     startButton.text = "Start 3D Scan"
                     currentResult = null
                     exportActions.visibility = View.GONE
-                    scanStatus.text = "Frames preserved • mesh export failed: "
+                    scanStatus.text = "Frames preserved • mesh export failed: " +
                         (t.message ?: "AI depth unavailable")
                     Toast.makeText(this, "Scan saved, but no valid depth mesh was exported", Toast.LENGTH_LONG).show()
                 }
