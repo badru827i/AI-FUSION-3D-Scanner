@@ -90,7 +90,8 @@ def run_eval(model, loader, device):
         for image, target, mask in loader:
             image, target, mask = image.to(device), target.to(device), mask.to(device)
             depth, _ = model(image)
-            total += F.smooth_l1_loss(depth * mask, target * mask).item()
+            per_pixel = F.smooth_l1_loss(depth, target, reduction="none")
+            total += (per_pixel * mask).sum().item() / mask.sum().clamp_min(1.0).item()
             batches += 1
     return total / max(batches, 1)
 
