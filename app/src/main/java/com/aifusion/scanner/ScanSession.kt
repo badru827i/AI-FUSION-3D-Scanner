@@ -74,6 +74,11 @@ class ScanSession(private val context: Context, private val profile: DeviceProfi
         val usableDepth = depthMaps.lastOrNull { it.isFile && it.length() > 8L }
             ?: throw IllegalStateException("No usable AI depth map was captured; frames are preserved")
 
+        val depthQuality = DepthQualityAnalyzer.analyzeFile(usableDepth)
+        require(depthQuality.usable) {
+            "AI depth surface quality is too low (${depthQuality.score}/100); improve lighting, hold steadier and scan again"
+        }
+
         val maxDimension = when (profile.mode) {
             ScanMode.LOW_RAM -> 96
             ScanMode.BALANCED -> 160
@@ -90,12 +95,7 @@ class ScanSession(private val context: Context, private val profile: DeviceProfi
         val metadataFile = File(dir, "scan.json")
         MeshExporter.writeObj(obj, mesh)
         MeshExporter.writeGlb(glb, mesh)
-        MeshExporter.writePly(ply, mesh)
-        require(obj.isFile && obj.length() > 50L) { "OBJ export is incomplete" }
-        require(glb.isFile && glb.length() > 100L) { "GLB export is incomplete" }
-        require(ply.isFile && ply.length() > 50L) { "PLY export is incomplete" }
-
-        val metadata = """{"frames":${validFrames.size},"depthMaps":${depthMaps.count { it.isFile }},"requestedFrameCount":$frameCount,"mode":"${profile.mode}","reconstruction":"single-view-ai-depth-surface","multiViewFusion":"not-yet-implemented","trackingFrames":${tracking.size},"trackingQuality":"${tracking.lastOrNull()?.quality ?: "UNKNOWN"}","obj":"${obj.name}","glb":"${glb.name}","ply":"${ply.name}","exportFormats":["OBJ","GLB","PLY"]}"""
+        MeshExporter.writePly(ply, me        val metadata = """{"frames":\${validFrames.size},"depthMaps":\${depthMaps.count { it.isFile }},"requestedFrameCount":$frameCount,"mode":"\${profile.mode}","reconstruction":"single-view-ai-depth-surface","multiViewFusion":"not-yet-implemented","depthQualityScore":\${depthQuality.score},"depthValidFraction":\${depthQuality.validFraction},"depthRange":\${depthQuality.normalizedRange},"depthMeanGradient":\${depthQuality.meanGradient},"trackingFrames":\${tracking.size},"trackingQuality":"\${tracking.lastOrNull()?.quality ?: "UNKNOWN"}","obj":"\${obj.name}","glb":"\${glb.name}","ply":"\${ply.name}","exportFormats":["OBJ","GLB","PLY"]}"""surface","multiViewFusion":"not-yet-implemented","trackingFrames":${tracking.size},"trackingQuality":"${tracking.lastOrNull()?.quality ?: "UNKNOWN"}","obj":"${obj.name}","glb":"${glb.name}","ply":"${ply.name}","exportFormats":["OBJ","GLB","PLY"]}"""
         metadataFile.writeText(metadata)
         return ScanResult(name, dir, obj, glb, ply, metadataFile)
     }
