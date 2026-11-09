@@ -117,3 +117,25 @@ Quantization acceptance requires:
 Until stereo calibration and scale recovery are implemented, call the output
 **relative depth**, not measured distance. A single RGB image produces a
 2.5D depth surface, not a complete watertight object scan.
+
+
+## 5. Export a trained checkpoint to ONNX
+
+Only run this after completing training with a licensed RGB/depth dataset:
+
+```bash
+pip install onnx
+python training/af_vision/export_onnx.py \
+  --checkpoint artifacts/af_vision_fp32.pt \
+  --out artifacts/af_vision_max.onnx \
+  --height 192 --width 256
+```
+
+The exporter requires a checkpoint containing learned weights and the
+`depth_kind=relative` contract. It validates output shapes and finite values,
+then runs the ONNX graph checker when the `onnx` package is installed.
+The exported graph has two outputs: `relative_depth` and `confidence`.
+It deliberately refuses to export a randomly initialized model as if it were
+trained. ONNX export is a portability milestone, not Android integration:
+a compatible Android runtime, delegate tests, and device benchmarks are still
+required before adding the model to the APK.
