@@ -96,7 +96,7 @@ class ScanSession(private val context: Context, private val profile: DeviceProfi
         MeshExporter.writeObj(obj, mesh)
         MeshExporter.writeGlb(glb, mesh)
         MeshExporter.writePly(ply, mesh)
-        val metadata = """{"frames":\${validFrames.size},"depthMaps":\${depthMaps.count { it.isFile }},"requestedFrameCount":$frameCount,"mode":"\${profile.mode}","reconstruction":"single-view-ai-depth-surface","multiViewFusion":"not-yet-implemented","depthQualityScore":\${depthQuality.score},"depthValidFraction":\${depthQuality.validFraction},"depthRange":\${depthQuality.normalizedRange},"depthMeanGradient":\${depthQuality.meanGradient},"trackingFrames":\${tracking.size},"trackingQuality":"\${tracking.lastOrNull()?.quality ?: "UNKNOWN"}","obj":"\${obj.name}","glb":"\${glb.name}","ply":"\${ply.name}","exportFormats":["OBJ","GLB","PLY"]}"""
+        val metadata = """{"frames":${validFrames.size},"depthMaps":${depthMaps.count { it.isFile }},"requestedFrameCount":$frameCount,"mode":"${profile.mode}","reconstruction":"single-view-ai-depth-surface","multiViewFusion":"not-yet-implemented","depthQualityScore":${depthQuality.score},"depthValidFraction":${depthQuality.validFraction},"depthRange":${depthQuality.normalizedRange},"depthMeanGradient":${depthQuality.meanGradient},"trackingFrames":${tracking.size},"trackingQuality":"${tracking.lastOrNull()?.quality ?: "UNKNOWN"}","obj":"${obj.name}","glb":"${glb.name}","ply":"${ply.name}","exportFormats":["OBJ","GLB","PLY"]}"""
         metadataFile.writeText(metadata)
         return ScanResult(name, dir, obj, glb, ply, metadataFile)
     }
