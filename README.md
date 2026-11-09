@@ -53,12 +53,26 @@ Current branch work improves the scan pipeline by:
 
 ## AF-Vision MAX — custom depth AI (research scaffold)
 
-The first PyTorch model/training scaffold is now in `training/af_vision/`:
+The first PyTorch model/training scaffold is now in training/af_vision/:
 - compact RGB-to-relative-depth network;
 - paired RGB/depth dataset loader and training loop;
 - held-out validation loss and tensor contract test;
 - guarded TorchAO INT4 weight-only script for eligible Linear layers.
 
-See [AF-Vision training guide](training/af_vision/README.md), [4-bit model specification](docs/AF_VISION_MAX_4BIT_MODEL_SPEC.md), and [implementation status](docs/AF_VISION_MAX_IMPLEMENTATION_STATUS.md).
+See the AF-Vision training guide at training/af_vision/README.md, the 4-bit model specification at docs/AF_VISION_MAX_4BIT_MODEL_SPEC.md, and implementation status at docs/AF_VISION_MAX_IMPLEMENTATION_STATUS.md.
 
 **Status is intentionally explicit:** architecture and training code are committed, but no dataset has been added, no training run or INT4 quantization has been completed, and no trained weights have been integrated into the Android APK. The current scaffold predicts single-image relative depth; calibrated stereo/metric depth and multi-view fusion remain separate engineering milestones.
+
+## AF-Vision MAX Stereo — milestone 1
+
+A separate calibrated-stereo research path has now been added:
+- compact left/right feature encoder and disparity cost-volume model;
+- confidence-map output;
+- metric conversion using calibrated focal length and physical baseline;
+- CSV-manifest loader and scene-disjoint training/validation split;
+- validation with AbsRel and RMSE in meters;
+- tests for stereo tensor contract, gradients, calibration math, and dataset scaling.
+
+See the AF-Vision stereo guide at training/af_vision/README_STEREO.md and the stereo milestone specification at docs/AF_STEREO_DEPTH_1_MILESTONE.md.
+
+**Important:** this is still untrained research code. No synchronized stereo dataset, trained checkpoint, ONNX/LiteRT model, Android stereo inference, or calibrated multi-view mesh integration has been delivered yet. Phones that cannot provide synchronized calibrated camera pairs must continue using the monocular relative-depth fallback. Do not label relative depth as real-world meter measurements.

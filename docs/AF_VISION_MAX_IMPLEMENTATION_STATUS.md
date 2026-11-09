@@ -1,6 +1,6 @@
 # AF-Vision MAX implementation status
 
-Updated: 2026-11-08
+Updated: 2026-11-10
 
 ## AF-Vision architecture upgrade
 
@@ -27,12 +27,24 @@ Updated: 2026-11-08
 
 The dataset itself has not been downloaded or committed. No AF-Vision training run has been completed and no trained AF-Vision weights exist.
 
+## AF-Vision MAX Stereo — milestone 1 added
+
+- Added AFStereoDepth, a shared mobile feature encoder and horizontal disparity cost-volume network for synchronized rectified stereo inputs.
+- Added a confidence output; it is trained against a disparity-error target and must still be calibrated/evaluated before being interpreted as uncertainty.
+- Added deterministic metric conversion: depth meters = focal length in pixels × measured baseline in meters ÷ disparity in pixels.
+- Added a manifest-based stereo dataset loader with focal-length scaling when the stereo pair is resized.
+- Added scene-disjoint train/validation split and a training loop that reports AbsRel and RMSE in meters.
+- Added tests for geometry round-trip, zero-disparity bounds, invalid calibration, model tensor shapes, gradients, input validation, dataset resizing, and scene leakage.
+- The new eight-test stereo suite passed locally in the repository test layout.
+
+**Not yet complete:** no synchronized real-world training dataset has been added; no training run or checkpoint exists; no quantization/export or LiteRT deployment has been performed; and Android Camera2 stereo capture, calibration, inference, pose alignment, multi-view fusion, and on-device testing remain future work. The metric route is valid only if paired images are truly synchronized, rectified, and calibrated. Otherwise use the monocular relative-depth path.
+
 ## Remaining work
 
-- Obtain licensed RGB/depth data and record source, license, camera intrinsics and depth units.
-- Train the new architecture and report held-out-scene metrics.
+- Obtain licensed RGB/depth and synchronized stereo data; record source, license, camera intrinsics/extrinsics and depth units.
+- Train the monocular and stereo architectures and report held-out-scene metrics.
 - Compare FP32 and quantized accuracy, model size and latency.
-- Export to ONNX/TFLite and validate Android runtime/delegate coverage.
+- Export to ONNX/LiteRT and validate Android runtime/delegate coverage.
 - Integrate AF-Vision behind a safe fallback to the current depth model.
 - Implement synchronized dual-camera capture, calibration, pose estimation and multi-view geometric fusion before claiming stereo/metric reconstruction.
 - Validate thermal stability, memory and mesh quality on physical Android devices.
