@@ -11,7 +11,7 @@ Camera-based 3D scanning for Android, designed to run without LiDAR.
 Camera capture → multi-view frames → depth estimation → point cloud → mesh → texture → GLB/OBJ export.
 
 ## Smart Device Engine
-v0.1 detects RAM, CPU cores and ABI and selects LOW_RAM, BALANCED or PERFORMANCE. The base app stays lightweight; ONNX/TFLite depth inference and GPU/NPU delegates are planned as separate modules.
+v0.1 detects RAM, CPU cores and ABI and selects LOW_RAM, BALANCED or PERFORMANCE. The base app stays lightweight and selects CPU/NNAPI/GPU inference paths according to runtime compatibility.
 
 ## Status
 v0.1.0 — camera capture foundation + adaptive device profile.
@@ -39,8 +39,7 @@ Current branch work improves the scan pipeline by:
 - saving compact AI depth snapshots and creating OBJ/GLB geometry from an actual depth map instead of a generated radial sphere;
 - recording reconstruction metadata and adding GLB position accessor bounds.
 
-**Important limitation:** the exported geometry is currently a *single-view relative-depth surface* derived from MiDaS output. It is not metric/real-world scale, does not include a projected color texture, and does not yet fuse/align all camera views into a watertight full object. Multi-view pose tracking, depth-map alignment, surface fusion, and on-device validation on multiple phones remain future work. The scanner should not be advertised as a completed photogrammetry solution yet.
-
+**Important limitation:** the exported geometry is currently a *single-view relative-depth surface* derived from monocular depth inference. It is not metric/real-world scale, does not include a projected color texture, and does not yet fuse/align all camera views into a watertight full object. Multi-view pose tracking, depth-map alignment, surface fusion, and on-device validation on multiple phones remain future work. The scanner should not be advertised as a completed photogrammetry solution yet.
 
 ## Realtime data routing and exports (v0.9.0)
 
@@ -50,15 +49,10 @@ Current branch work improves the scan pipeline by:
 - Completed scans produce OBJ, binary glTF (GLB), PLY and scan.json files inside the local scan session. Save OBJ / GLB / PLY opens Android's document picker to copy each file to a user-selected destination.
 - The exported mesh is currently generated from the latest usable monocular relative-depth map. It is still a 2.5D surface rather than calibrated metric depth or a fused, watertight multi-view object. The router and UX changes do not claim that multi-view reconstruction is complete.
 
+## Depth AI — pretrained Depth Anything V2 Small
 
-## AF-Vision MAX — custom depth AI (research scaffold)
+The Android depth engine is being switched from MiDaS Small to the pretrained Depth Anything V2 Small LiteRT/TFLite export. The selected dynamic-INT8-weight artifact keeps a float32 input/output contract and uses a fixed 686 × 518 input. The APK workflow downloads the model at build time rather than committing the binary to Git.
 
-The first PyTorch model/training scaffold is now in `training/af_vision/`:
-- compact RGB-to-relative-depth network;
-- paired RGB/depth dataset loader and training loop;
-- held-out validation loss and tensor contract test;
-- guarded TorchAO INT4 weight-only script for eligible Linear layers.
+See [Android integration notes](docs/DEPTH_ANYTHING_V2_ANDROID_INTEGRATION.md) for preprocessing, runtime fallback, licensing, and validation gates.
 
-See [AF-Vision training guide](training/af_vision/README.md), [4-bit model specification](docs/AF_VISION_MAX_4BIT_MODEL_SPEC.md), and [implementation status](docs/AF_VISION_MAX_IMPLEMENTATION_STATUS.md).
-
-**Status is intentionally explicit:** architecture and training code are committed, but no dataset has been added, no training run or INT4 quantization has been completed, and no trained weights have been integrated into the Android APK. The current scaffold predicts single-image relative depth; calibrated stereo/metric depth and multi-view fusion remain separate engineering milestones.
+**Depth semantics:** Depth Anything V2 Small returns monocular relative depth, not calibrated meters. Metric distance still requires synchronized, rectified stereo input and valid camera calibration. Qualcomm, MediaTek, NNAPI, GPU, and CPU performance must be tested on actual devices; no accelerator is assumed from the chipset name.

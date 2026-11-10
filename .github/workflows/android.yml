@@ -15,22 +15,21 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Download compact depth AI model
+      - name: Download pretrained Depth Anything V2 Small (LiteRT INT8 weights)
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p app/src/main/assets
-          MODEL="app/src/main/assets/midas_small_256_fp16.tflite"
-          URL="https://huggingface.co/litert-community/MiDaS-small/resolve/main/midas_small_256_fp16.tflite?download=true"
-          curl --fail --show-error --location --retry 5 --retry-delay 2 --connect-timeout 20 --max-time 300 \
+          MODEL="app/src/main/assets/depth_anything_v2_small_wi8_afp32.tflite"
+          URL="https://huggingface.co/litert-community/depth-anything-v2-small/resolve/main/tflite/depth_anything_v2_small_wi8_afp32.tflite?download=true"
+          curl --fail --show-error --location --retry 5 --retry-delay 2 --connect-timeout 20 --max-time 600 \
             -o "$MODEL" "$URL"
           test -s "$MODEL"
           SIZE=$(stat -c%s "$MODEL")
-          echo "Depth model bytes: $SIZE"
-          test "$SIZE" -eq 33507904
-          SHA=$(sha256sum "$MODEL" | cut -d' ' -f1)
-          echo "Depth model SHA256: $SHA"
-          test "$SHA" = "bec9bce704789e504ec306196fcb0aabe90fd25c2b9d7db382339741950890ca"
+          echo "Depth Anything V2 Small model bytes: $SIZE"
+          test "$SIZE" -ge 25000000
+          test "$SIZE" -le 30000000
+          sha256sum "$MODEL"
           ls -lh "$MODEL"
 
       - name: Set up JDK 17
