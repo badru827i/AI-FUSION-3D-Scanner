@@ -26,8 +26,11 @@ class DepthAiEngine(
 ) : AutoCloseable {
 
     companion object {
-        private const val MODEL = "midas_small_256_fp16.tflite"
-        private const val SIZE = 256
+        // LiteRT Community export of the pretrained Depth Anything V2 Small model.
+        // Fixed graph input: normalized RGB, NCHW, 518 x 686.
+        private const val MODEL = "depth_anything_v2_small_wi8_afp32.tflite"
+        private const val INPUT_WIDTH = 686
+        private const val INPUT_HEIGHT = 518
     }
 
     private var gpuDelegate: GpuDelegate? = null
@@ -40,11 +43,10 @@ class DepthAiEngine(
         val cpuOptions = Interpreter.Options().apply {
             setNumThreads(if (profile.mode == ScanMode.LOW_RAM) 2 else 4)
         }
-
         val model = loadModel()
 
-        // Try Android's generic NNAPI interface first. Compatible device drivers
-        // may route operations to an NPU, DSP or GPU; NNAPI does not guarantee NPU use.
+        // NNAPI is only an optional delegate. A successful delegate allocation
+        // does not prove that every operation runs on an NPU.
         if (android.os.Build.VERSION.SDK_INT >= 27 && profile.mode != ScanMode.LOW_RAM) {
             var delegate: NnApiDelegate? = null
             try {
@@ -65,12 +67,15 @@ class DepthAiEngine(
             }
         }
 
-        // If NNAPI initialization fails, try the portable TFLite GPU delegate.
+        // Keep FP32 GPU arithmetic: the published LiteRT model card warns that
+        // reduced-precision GPU execution can produce incorrect depth maps.
         if (!::interpreter.isInitialized && profile.mode != ScanMode.LOW_RAM) {
             try {
                 val compatibility = CompatibilityList()
                 if (compatibility.isDelegateSupportedOnThisDevice) {
-                    val delegate = GpuDelegate()
+                    val delegate = GpuDelegate(
+                        GpuDelegate.Options().setPrecisionLossAllowed(false)
+                    )
                     try {
                         val gpuOptions = Interpreter.Options().apply {
                             setNumThreads(4)
@@ -81,12 +86,9 @@ class DepthAiEngine(
                         candidate.allocateTensors()
                         interpreter = candidate
                         gpuDelegate = delegate
-                        backend = "GPU"
+                        backend = "GPU (FP32)"
                     } catch (_: Throwable) {
-                        try {
-                            delegate.close()
-                        } catch (_: Throwable) {
-                        }
+                        try { delegate.close() } catch (_: Throwable) {}
                     }
                 }
             } catch (_: Throwable) {
@@ -101,11 +103,18 @@ class DepthAiEngine(
             interpreter = candidate
             backend = "CPU"
         }
+
+        val inputShape = interpreter.getInputTensor(0).shape()
+        require(inputShape.contentEquals(intArrayOf(1, 3, INPUT_HEIGHT, INPUT_WIDTH))) {
+            "Unexpected Depth Anything V2 input shape: " + inputShape.contentToString()
+        }
     }
 
     private fun loadModel(): ByteBuffer {
         val bytes = context.assets.open(MODEL).use { it.readBytes() }
-        require(bytes.size > 1_000_000) { "Depth model asset is invalid or incomplete." }
+        require(bytes.size in 25_000_000..30_000_000) {
+            "Depth Anything V2 model asset is missing, incomplete, or has an unexpected size."
+        }
         return ByteBuffer.allocateDirect(bytes.size)
             .order(ByteOrder.nativeOrder())
             .apply {
@@ -116,61 +125,72 @@ class DepthAiEngine(
 
     fun estimate(bitmap: Bitmap): DepthResult {
         val start = SystemClock.elapsedRealtime()
-        val input = ByteBuffer.allocateDirect(SIZE * SIZE * 3 * 4)
-            .order(ByteOrder.nativeOrder())
+        val input = ByteBuffer.allocateDirect(
+            INPUT_WIDTH * INPUT_HEIGHT * 3 * 4
+        ).order(ByteOrder.nativeOrder())
 
-        val scaled = Bitmap.createScaledBitmap(bitmap, SIZE, SIZE, true)
+        val scaled = Bitmap.createScaledBitmap(bitmap, INPUT_WIDTH, INPUT_HEIGHT, true)
         try {
-            val pixels = IntArray(SIZE * SIZE)
-            scaled.getPixels(pixels, 0, SIZE, 0, 0, SIZE, SIZE)
-            for (pixel in pixels) {
-                input.putFloat((((pixel shr 16) and 255) / 255f - 0.485f) / 0.229f)
-                input.putFloat((((pixel shr 8) and 255) / 255f - 0.456f) / 0.224f)
-                input.putFloat(((pixel and 255) / 255f - 0.406f) / 0.225f)
+            val pixels = IntArray(INPUT_WIDTH * INPUT_HEIGHT)
+            scaled.getPixels(pixels, 0, INPUT_WIDTH, 0, 0, INPUT_WIDTH, INPUT_HEIGHT)
+
+            // Model contract is NCHW RGB float32, normalized by ImageNet mean/std.
+            for (channel in 0..2) {
+                val mean = when (channel) {
+                    0 -> 0.485f
+                    1 -> 0.456f
+                    else -> 0.406f
+                }
+                val std = when (channel) {
+                    0 -> 0.229f
+                    1 -> 0.224f
+                    else -> 0.225f
+                }
+                for (pixel in pixels) {
+                    val value = when (channel) {
+                        0 -> (pixel shr 16) and 255
+                        1 -> (pixel shr 8) and 255
+                        else -> pixel and 255
+                    }
+                    input.putFloat((value / 255f - mean) / std)
+                }
             }
             input.rewind()
 
             val outputTensor = interpreter.getOutputTensor(0)
-            val outputCount = outputTensor.numElements()
             require(outputTensor.dataType() == org.tensorflow.lite.DataType.FLOAT32) {
                 "Unsupported depth output type: " + outputTensor.dataType()
             }
-            val output = ByteBuffer.allocateDirect(outputCount * 4)
+            val outputShape = outputTensor.shape()
+            require(outputShape.contentEquals(intArrayOf(1, INPUT_HEIGHT, INPUT_WIDTH))) {
+                "Unexpected Depth Anything V2 output shape: " + outputShape.contentToString()
+            }
+            val output = ByteBuffer.allocateDirect(outputTensor.numElements() * 4)
                 .order(ByteOrder.nativeOrder())
 
             interpreter.run(input, output)
             output.rewind()
 
-            val raw = FloatArray(outputCount)
-            for (i in raw.indices) raw[i] = output.float
-
-            val shape = outputTensor.shape()
-            val spatial = shape.filter { it > 1 }
-            val outHeight = if (spatial.size >= 2) spatial[spatial.size - 2] else SIZE
-            val outWidth = if (spatial.size >= 1) spatial[spatial.size - 1] else SIZE
-            val planeSize = (outWidth * outHeight).coerceAtMost(raw.size)
-
-            val depth = FloatArray(planeSize)
-            val offset = (raw.size - planeSize).coerceAtLeast(0)
+            val raw = FloatArray(outputTensor.numElements())
             var minV = Float.POSITIVE_INFINITY
             var maxV = Float.NEGATIVE_INFINITY
-
-            for (i in depth.indices) {
-                val value = raw[offset + i]
-                depth[i] = value
+            for (i in raw.indices) {
+                val value = output.float
+                require(value.isFinite()) { "Depth model returned a non-finite value." }
+                raw[i] = value
                 minV = min(minV, value)
                 maxV = max(maxV, value)
             }
 
+            // Keep this as a normalized relative-depth preview only. This is not
+            // metric distance; calibrated stereo is a separate geometry path.
             val range = max(1e-6f, maxV - minV)
-            for (i in depth.indices) {
-                depth[i] = (depth[i] - minV) / range
-            }
+            for (i in raw.indices) raw[i] = (raw[i] - minV) / range
 
             return DepthResult(
-                depth = depth,
-                width = outWidth,
-                height = outHeight,
+                depth = raw,
+                width = INPUT_WIDTH,
+                height = INPUT_HEIGHT,
                 backend = backend,
                 inferenceMs = SystemClock.elapsedRealtime() - start
             )
@@ -180,7 +200,7 @@ class DepthAiEngine(
     }
 
     override fun close() {
-        interpreter.close()
+        if (::interpreter.isInitialized) interpreter.close()
         gpuDelegate?.close()
         nnApiDelegate?.close()
     }
